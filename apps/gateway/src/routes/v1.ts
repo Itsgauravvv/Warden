@@ -93,7 +93,8 @@ export function createV1Routes(customFetch?: typeof fetch) {
     const provider: ProviderName = providerParse.data;
 
     const reqId = `req_${crypto.randomUUID()}`;
-    const policy = DEFAULT_POLICY;
+    const projectHeader = c.req.header(`${BRAND.headerPrefix}-Project-Id`) ?? auth.projectId;
+    const policy = await repo.resolveEffectivePolicy(auth.tenantId, projectHeader);
 
     // Run Step 3 Detection Pipeline across all input messages
     const combinedInput = parsedReq.data.messages.map((m) => m.content ?? "").join("\n");

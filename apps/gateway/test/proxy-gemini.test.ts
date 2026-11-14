@@ -1,79 +1,8 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { createClient, type Client } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
-import * as schema from "../src/db/schema.js";
+import type { Client } from "@libsql/client";
 import { TenantRepository } from "../src/db/repository.js";
 import { createGatewayApp } from "../src/index.js";
-
-async function setupProxyTestDb() {
-  const client = createClient({ url: ":memory:" });
-  await client.executeMultiple(`
-    CREATE TABLE tenants (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      slug TEXT NOT NULL UNIQUE,
-      is_sandbox INTEGER NOT NULL DEFAULT 0,
-      retention_days INTEGER NOT NULL DEFAULT 30,
-      raw_payload_opt_in INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE api_keys (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT,
-      name TEXT NOT NULL,
-      prefix TEXT NOT NULL,
-      key_hash TEXT NOT NULL UNIQUE,
-      scopes_json TEXT NOT NULL,
-      expires_at INTEGER,
-      revoked_at INTEGER,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE provider_credentials (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      base_url TEXT,
-      encrypted_api_key TEXT NOT NULL,
-      iv TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE requests (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT,
-      session_id TEXT,
-      provider TEXT NOT NULL,
-      model TEXT NOT NULL,
-      final_action TEXT NOT NULL,
-      cache_hit INTEGER NOT NULL DEFAULT 0,
-      prompt_tokens INTEGER NOT NULL DEFAULT 0,
-      completion_tokens INTEGER NOT NULL DEFAULT 0,
-      cost_usd REAL NOT NULL DEFAULT 0,
-      latency_ms INTEGER NOT NULL DEFAULT 0,
-      prompt_redacted TEXT NOT NULL,
-      response_redacted TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE findings (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      request_id TEXT NOT NULL,
-      detector TEXT NOT NULL,
-      rule_id TEXT NOT NULL,
-      owasp_category TEXT NOT NULL,
-      confidence REAL NOT NULL,
-      action TEXT NOT NULL,
-      direction TEXT NOT NULL,
-      evidence_start INTEGER NOT NULL,
-      evidence_end INTEGER NOT NULL,
-      snippet_redacted TEXT NOT NULL,
-      message TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-  `);
-  return { client, db: drizzle(client, { schema }) };
-}
+import { createFullTestDb } from "./test-db.js";
 
 describe("Step 2: Gemini OpenAI-Compatible Proxy, AES-GCM Encryption & SSRF Guard", () => {
   let client: Client;
@@ -81,7 +10,7 @@ describe("Step 2: Gemini OpenAI-Compatible Proxy, AES-GCM Encryption & SSRF Guar
   let tenantKey: string;
 
   beforeEach(async () => {
-    const setup = await setupProxyTestDb();
+    const setup = await createFullTestDb();
     client = setup.client;
     repo = new TenantRepository(setup.db, "super-secret-master-key-for-aes-256-gcm!");
 
@@ -105,7 +34,9 @@ describe("Step 2: Gemini OpenAI-Compatible Proxy, AES-GCM Encryption & SSRF Guar
     });
 
     // Verify raw Gemini key is encrypted in SQLite
-    const rawCredRow = await client.execute("SELECT encrypted_api_key, iv FROM provider_credentials WHERE id = 'cred_1'");
+    const rawCredRow = await client.execute(
+      "SELECT encrypted_api_key, iv FROM provider_credentials WHERE id = 'cred_1'"
+    );
     const storedEncrypted = String(rawCredRow.rows[0]?.encrypted_api_key);
     expect(storedEncrypted).not.toContain("AIzaSy");
 

@@ -192,4 +192,218 @@ export class TenantRepository {
       .from(schema.findings)
       .where(and(eq(schema.findings.tenantId, tenantId), eq(schema.findings.requestId, requestId)));
   }
+  /**
+   * Creates a new policy or appends a new immutable version to an existing policy,
+   * then activates it as currentVersionId.
+   */
+  async savePolicyVersion(input: {
+    tenantId: string;
+    policyId: string;
+    name: string;
+    rawYamlOrJson: string;
+    createdBy?: string;
+  }) {
+    const { parsePolicyYamlOrJson } = await import("@warden/policy-schema");
+    const { policy, canonicalYaml } = parsePolicyYamlOrJson(input.rawYamlOrJson);
+    const now = Date.now();
+
+    const existingPolicy = await this.db
+      .select()
+      .from(schema.policies)
+      .where(and(eq(schema.policies.tenantId, input.tenantId), eq(schema.policies.id, input.policyId)))
+      .limit(1);
+
+    const existingVersions = await this.db
+      .select()
+      .from(schema.policyVersions)
+      .where(
+        and(
+          eq(schema.policyVersions.tenantId, input.tenantId),
+          eq(schema.policyVersions.policyId, input.policyId)
+        )
+      )
+      .orderBy(desc(schema.policyVersions.versionNumber));
+
+    const nextVersionNumber = (existingVersions[0]?.versionNumber ?? 0) + 1;
+    const versionId = `pver_${crypto.randomUUID()}`;
+
+    if (existingPolicy.length === 0) {
+      await this.db.insert(schema.policies).values({
+        id: input.policyId,
+        tenantId: input.tenantId,
+        name: input.name,
+        currentVersionId: versionId,
+        createdAt: now,
+      });
+    }
+
+    await this.db.insert(schema.policyVersions).values({
+      id: versionId,
+      tenantId: input.tenantId,
+      policyId: input.policyId,
+      versionNumber: nextVersionNumber,
+      yamlContent: canonicalYaml,
+      parsedJson: JSON.stringify(policy),
+      createdBy: input.createdBy ?? "system",
+      createdAt: now,
+    });
+
+    if (existingPolicy.length > 0) {
+      await this.db
+        .update(schema.policies)
+        .set({ currentVersionId: versionId, name: input.name })
+        .where(and(eq(schema.policies.tenantId, input.tenantId), eq(schema.policies.id, input.policyId)));
+    }
+
+    return {
+      policyId: input.policyId,
+      versionId,
+      versionNumber: nextVersionNumber,
+      policy,
+      canonicalYaml,
+    };
+  }
+
+  /**
+   * Instant rollback: points a policy's currentVersionId to any previous immutable versionNumber.
+   */
+  async rollbackPolicyVersion(tenantId: string, policyId: string, targetVersionNumber: number) {
+    const rows = await this.db
+      .select()
+      .from(schema.policyVersions)
+      .where(
+        and(
+          eq(schema.policyVersions.tenantId, tenantId),
+          eq(schema.policyVersions.policyId, policyId),
+          eq(schema.policyVersions.versionNumber, targetVersionNumber)
+        )
+      )
+      .limit(1);
+
+    const target = rows[0];
+    if (!target) {
+      throw new Error(`Policy version ${targetVersionNumber} not found`);
+    }
+
+    await this.db
+      .update(schema.policies)
+      .set({ currentVersionId: target.id })
+      .where(and(eq(schema.policies.tenantId, tenantId), eq(schema.policies.id, policyId)));
+
+    const { PolicyDocumentSchema } = await import("@warden/policy-schema");
+    return {
+      versionId: target.id,
+      versionNumber: target.versionNumber,
+      policy: PolicyDocumentSchema.parse(JSON.parse(target.parsedJson)),
+    };
+  }
+
+  /**
+   * Creates or updates a project with an optional policy override.
+   */
+  async upsertProject(input: {
+    id: string;
+    tenantId: string;
+    name: string;
+    activePolicyId?: string | null;
+  }) {
+    const existing = await this.db
+      .select()
+      .from(schema.projects)
+      .where(and(eq(schema.projects.tenantId, input.tenantId), eq(schema.projects.id, input.id)))
+      .limit(1);
+
+    if (existing.length === 0) {
+      await this.db.insert(schema.projects).values({
+        id: input.id,
+        tenantId: input.tenantId,
+        name: input.name,
+        activePolicyId: input.activePolicyId ?? null,
+        createdAt: Date.now(),
+      });
+    } else {
+      await this.db
+        .update(schema.projects)
+        .set({ name: input.name, activePolicyId: input.activePolicyId ?? null })
+        .where(and(eq(schema.projects.tenantId, input.tenantId), eq(schema.projects.id, input.id)));
+    }
+  }
+
+  /**
+   * Resolves the active PolicyDocument for a request:
+   * 1. Project override policy (if projectId has activePolicyId)
+   * 2. Tenant's latest active policy
+   * 3. Fallback to DEFAULT_POLICY
+   */
+  async resolveEffectivePolicy(
+    tenantId: string,
+    projectId?: string | null
+  ): Promise<import("@warden/policy-schema").PolicyDocument> {
+    const { DEFAULT_POLICY, PolicyDocumentSchema } = await import("@warden/policy-schema");
+
+    let targetPolicyId: string | null = null;
+
+    if (projectId) {
+      const projRows = await this.db
+        .select()
+        .from(schema.projects)
+        .where(and(eq(schema.projects.tenantId, tenantId), eq(schema.projects.id, projectId)))
+        .limit(1);
+      targetPolicyId = projRows[0]?.activePolicyId ?? null;
+    }
+
+    let policyRow;
+    if (targetPolicyId) {
+      const rows = await this.db
+        .select()
+        .from(schema.policies)
+        .where(and(eq(schema.policies.tenantId, tenantId), eq(schema.policies.id, targetPolicyId)))
+        .limit(1);
+      policyRow = rows[0];
+    } else {
+      const rows = await this.db
+        .select()
+        .from(schema.policies)
+        .where(eq(schema.policies.tenantId, tenantId))
+        .orderBy(desc(schema.policies.createdAt))
+        .limit(1);
+      policyRow = rows[0];
+    }
+
+    if (!policyRow?.currentVersionId) {
+      return DEFAULT_POLICY;
+    }
+
+    const verRows = await this.db
+      .select()
+      .from(schema.policyVersions)
+      .where(
+        and(
+          eq(schema.policyVersions.tenantId, tenantId),
+          eq(schema.policyVersions.id, policyRow.currentVersionId)
+        )
+      )
+      .limit(1);
+
+    if (!verRows[0]) {
+      return DEFAULT_POLICY;
+    }
+
+    return PolicyDocumentSchema.parse(JSON.parse(verRows[0].parsedJson));
+  }
+
+  async getPolicyVersionByNumber(tenantId: string, policyId: string, versionNumber: number) {
+    const rows = await this.db
+      .select()
+      .from(schema.policyVersions)
+      .where(
+        and(
+          eq(schema.policyVersions.tenantId, tenantId),
+          eq(schema.policyVersions.policyId, policyId),
+          eq(schema.policyVersions.versionNumber, versionNumber)
+        )
+      )
+      .limit(1);
+    return rows[0] ?? null;
+  }
 }

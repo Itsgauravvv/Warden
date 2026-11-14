@@ -142,3 +142,4 @@ export const DEFAULT_POLICY: PolicyDocument = PolicyDocumentSchema.parse({
   description: "Balanced default protection: blocks secrets & injections, redacts PII, guards agent tools.",
   detectors: {},
 });
+export { parsePolicyYamlOrJson, diffPolicyDocuments, type PolicyChangeEntry } from "./yaml.js";

@@ -1,3 +1,4 @@
+import { createAdminPolicyRoutes } from "./routes/admin-policies.js";
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import { BRAND } from "@warden/brand";
@@ -19,7 +20,7 @@ export type AppVariables = {
 
 export function createGatewayApp(repo?: TenantRepository, customFetch?: typeof fetch) {
   const app = new Hono<{ Variables: AppVariables }>();
-
+  app.route("/admin/v1/policies", createAdminPolicyRoutes(repo));
   app.use("*", secureHeaders());
   app.use("*", async (c, next) => {
     c.header(`${BRAND.headerPrefix}-Gate`, BRAND.name);
