@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { BRAND } from "@warden/brand";
-import { DEFAULT_POLICY } from "@warden/policy-schema";
 import {
   checkCanaryLeak,
   evaluateInputPipeline,
@@ -9,6 +8,10 @@ import {
   restoreRedactedValues,
 } from "@warden/detectors";
 import type { AppVariables } from "../index.js";
+import type { TenantRepository } from "../db/repository.js";
+import type { RateLimitEngine } from "../durable-objects/rate-limiter.js";
+import type { SemanticCache } from "../cache/semantic-cache.js";
+import { sha256Hex } from "../auth/api-key.js";
 import {
   callUpstreamProvider,
   ChatCompletionRequestSchema,
@@ -17,10 +20,25 @@ import {
   type ProviderName,
 } from "../adapters/provider.js";
 
-export function createV1Routes(customFetch?: typeof fetch) {
+export interface V1RouteDependencies {
+  repo?: TenantRepository;
+  customFetch?: typeof fetch;
+  rateLimiter: RateLimitEngine;
+  semanticCache: SemanticCache;
+}
+
+// Estimated cost per 1K tokens (Gemini 2.5 Flash pricing baseline for budget tracking)
+function estimateCostUsd(promptTokens: number, completionTokens: number): number {
+  return Number(((promptTokens * 0.00015 + completionTokens * 0.0006) / 1000).toFixed(6));
+}
+
+export function createV1Routes(deps: V1RouteDependencies) {
   const v1 = new Hono<{ Variables: AppVariables }>();
 
   v1.use("*", async (c, next) => {
+    if (deps.repo && !c.get("repo")) {
+      c.set("repo", deps.repo);
+    }
     const authHeader = c.req.header("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return c.json(
@@ -85,6 +103,30 @@ export function createV1Routes(customFetch?: typeof fetch) {
       );
     }
 
+    // 1. Check Toll (Token-Bucket Rate Limit & Token/Cost Budgets)
+    const rateCheck = deps.rateLimiter.checkAndConsumeRequest({
+      tenantId: auth.tenantId,
+      scope: "tenant",
+      scopeId: auth.tenantId,
+    });
+
+    c.header(`${BRAND.headerPrefix}-RateLimit-Remaining-RPM`, String(rateCheck.remainingRpm));
+
+    if (!rateCheck.allowed) {
+      c.header("Retry-After", String(rateCheck.retryAfterSeconds));
+      return c.json(
+        {
+          error: {
+            message: `Rate limit or budget exceeded (${rateCheck.reason}). Retry after ${rateCheck.retryAfterSeconds}s.`,
+            type: "rate_limit_error",
+            code: rateCheck.reason,
+            retry_after_seconds: rateCheck.retryAfterSeconds,
+          },
+        },
+        429
+      );
+    }
+
     const providerHeader = c.req.header(`${BRAND.headerPrefix}-Provider`) ?? "gemini";
     const providerParse = ProviderNameSchema.safeParse(providerHeader);
     if (!providerParse.success) {
@@ -96,11 +138,10 @@ export function createV1Routes(customFetch?: typeof fetch) {
     const projectHeader = c.req.header(`${BRAND.headerPrefix}-Project-Id`) ?? auth.projectId;
     const policy = await repo.resolveEffectivePolicy(auth.tenantId, projectHeader);
 
-    // Run Step 3 Detection Pipeline across all input messages
+    // 2. Run Detection Pipeline across all input messages
     const combinedInput = parsedReq.data.messages.map((m) => m.content ?? "").join("\n");
     const evaluation = evaluateInputPipeline(combinedInput, policy);
 
-    // Short-circuit immediately if blocked!
     if (evaluation.finalAction === "block") {
       await repo.insertRequest(auth.tenantId, {
         id: reqId,
@@ -135,7 +176,44 @@ export function createV1Routes(customFetch?: typeof fetch) {
       );
     }
 
-    // Resolve upstream key
+    // 3. Check Echo (Semantic Cache) — strictly isolated by (tenantId, policyHash, model)
+    const policyHash = (await sha256Hex(JSON.stringify(policy))).slice(0, 16);
+    if (policy.semanticCache.enabled && !parsedReq.data.stream) {
+      const cacheHit = deps.semanticCache.lookup({
+        tenantId: auth.tenantId,
+        policyHash,
+        model: parsedReq.data.model,
+        promptText: evaluation.sanitizedText,
+        similarityThreshold: policy.semanticCache.similarityThreshold,
+      });
+
+      if (cacheHit) {
+        await repo.insertRequest(auth.tenantId, {
+          id: reqId,
+          provider,
+          model: parsedReq.data.model,
+          finalAction: evaluation.finalAction,
+          cacheHit: true,
+          promptTokens: 0,
+          completionTokens: 0,
+          costUsd: 0,
+          promptRedacted: evaluation.sanitizedText,
+          responseRedacted: "[Served by Echo Semantic Cache]",
+          latencyMs: Date.now() - startedAt,
+          createdAt: Date.now(),
+        });
+
+        c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);
+        c.header(`${BRAND.headerPrefix}-Cache`, "HIT");
+        c.header(`${BRAND.headerPrefix}-Cache-Similarity`, cacheHit.similarity.toFixed(4));
+        c.header(`${BRAND.headerPrefix}-Action`, evaluation.finalAction);
+        return c.json(cacheHit.entry.responseJson, 200);
+      }
+    }
+
+    c.header(`${BRAND.headerPrefix}-Cache`, "MISS");
+
+    // 4. Resolve upstream provider key
     const headerProviderKey = c.req.header(`${BRAND.headerPrefix}-Provider-Key`);
     const headerBaseUrl = c.req.header(`${BRAND.headerPrefix}-Provider-Base-Url`);
 
@@ -159,7 +237,6 @@ export function createV1Routes(customFetch?: typeof fetch) {
       upstreamBaseUrl = upstreamBaseUrl ?? storedCred.baseUrl;
     }
 
-    // Prepare sanitized messages (with PII redacted + canary token planted in system prompt)
     const canaryToken = generateCanaryToken();
     const outgoingMessages = parsedReq.data.messages.map((m, idx) => {
       let content = m.content ?? "";
@@ -179,7 +256,7 @@ export function createV1Routes(customFetch?: typeof fetch) {
         apiKey: upstreamApiKey,
         baseUrl: upstreamBaseUrl,
         body: { ...parsedReq.data, messages: outgoingMessages },
-        fetchImpl: customFetch,
+        fetchImpl: deps.customFetch,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Upstream request failed";
@@ -219,7 +296,6 @@ export function createV1Routes(customFetch?: typeof fetch) {
 
     let assistantText = upstreamJson.choices?.[0]?.message?.content ?? "";
 
-    // Check if the model leaked the planted Canary token
     if (policy.detectors.canary.enabled) {
       const canaryFinding = checkCanaryLeak({
         responseText: assistantText,
@@ -253,7 +329,6 @@ export function createV1Routes(customFetch?: typeof fetch) {
       }
     }
 
-    // Restore reversible PII redactions in the response if permitted
     if (policy.detectors.pii.restoreOnResponse && Object.keys(evaluation.redactionMap).length > 0) {
       assistantText = restoreRedactedValues(assistantText, evaluation.redactionMap);
       if (upstreamJson.choices?.[0]?.message) {
@@ -261,8 +336,31 @@ export function createV1Routes(customFetch?: typeof fetch) {
       }
     }
 
-    const promptTokens = upstreamJson.usage?.prompt_tokens ?? 0;
-    const completionTokens = upstreamJson.usage?.completion_tokens ?? 0;
+    const promptTokens = upstreamJson.usage?.prompt_tokens ?? 20;
+    const completionTokens = upstreamJson.usage?.completion_tokens ?? 10;
+    const costUsd = estimateCostUsd(promptTokens, completionTokens);
+
+    // Record token & USD usage in Toll (RateLimiter)
+    deps.rateLimiter.recordUsage({
+      tenantId: auth.tenantId,
+      totalTokens: promptTokens + completionTokens,
+      costUsd,
+    });
+
+    // Store in Echo (Semantic Cache) if enabled
+    if (policy.semanticCache.enabled && upstreamRes.status === 200) {
+      deps.semanticCache.store({
+        tenantId: auth.tenantId,
+        policyHash,
+        model: parsedReq.data.model,
+        promptText: evaluation.sanitizedText,
+        responseJson: upstreamJson as Record<string, unknown>,
+        promptTokens,
+        completionTokens,
+        costUsd,
+        ttlSeconds: policy.semanticCache.ttlSeconds,
+      });
+    }
 
     await repo.insertRequest(auth.tenantId, {
       id: reqId,
@@ -271,6 +369,7 @@ export function createV1Routes(customFetch?: typeof fetch) {
       finalAction: evaluation.finalAction,
       promptTokens,
       completionTokens,
+      costUsd,
       promptRedacted: evaluation.sanitizedText,
       responseRedacted: assistantText,
       latencyMs: Date.now() - startedAt,
