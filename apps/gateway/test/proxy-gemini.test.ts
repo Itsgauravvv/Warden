@@ -55,6 +55,22 @@ async function setupProxyTestDb() {
       response_redacted TEXT,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE findings (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      detector TEXT NOT NULL,
+      rule_id TEXT NOT NULL,
+      owasp_category TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      action TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      evidence_start INTEGER NOT NULL,
+      evidence_end INTEGER NOT NULL,
+      snippet_redacted TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
   `);
   return { client, db: drizzle(client, { schema }) };
 }

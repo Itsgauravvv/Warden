@@ -1,5 +1,13 @@
 import { Hono } from "hono";
 import { BRAND } from "@warden/brand";
+import { DEFAULT_POLICY } from "@warden/policy-schema";
+import {
+  checkCanaryLeak,
+  evaluateInputPipeline,
+  generateCanaryToken,
+  injectCanaryIntoSystemPrompt,
+  restoreRedactedValues,
+} from "@warden/detectors";
 import type { AppVariables } from "../index.js";
 import {
   callUpstreamProvider,
@@ -12,7 +20,6 @@ import {
 export function createV1Routes(customFetch?: typeof fetch) {
   const v1 = new Hono<{ Variables: AppVariables }>();
 
-  // Authenticate all /v1/* calls with a Warden tenant API key
   v1.use("*", async (c, next) => {
     const authHeader = c.req.header("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -40,7 +47,6 @@ export function createV1Routes(customFetch?: typeof fetch) {
     await next();
   });
 
-  // GET /v1/models (OpenAI-compatible model list, Gemini listed first)
   v1.get("/models", (c) => {
     const models = Object.values(DEFAULT_MODELS)
       .flat()
@@ -54,13 +60,11 @@ export function createV1Routes(customFetch?: typeof fetch) {
     return c.json({ object: "list", data: models });
   });
 
-  // POST /v1/chat/completions (Streaming & Non-Streaming, defaults to Gemini)
   v1.post("/chat/completions", async (c) => {
     const startedAt = Date.now();
     const auth = c.get("auth");
     const repo = c.get("repo");
 
-    // Size limit guard (prevent oversized-body DoS)
     const rawText = await c.req.text();
     if (rawText.length > 512_000) {
       return c.json({ error: { message: "Request body exceeds 512KB limit", type: "invalid_request_error" } }, 413);
@@ -81,7 +85,6 @@ export function createV1Routes(customFetch?: typeof fetch) {
       );
     }
 
-    // Determine provider (header override or default to "gemini")
     const providerHeader = c.req.header(`${BRAND.headerPrefix}-Provider`) ?? "gemini";
     const providerParse = ProviderNameSchema.safeParse(providerHeader);
     if (!providerParse.success) {
@@ -89,7 +92,49 @@ export function createV1Routes(customFetch?: typeof fetch) {
     }
     const provider: ProviderName = providerParse.data;
 
-    // Resolve upstream key: either ephemeral per-request header (never stored) or encrypted tenant credential
+    const reqId = `req_${crypto.randomUUID()}`;
+    const policy = DEFAULT_POLICY;
+
+    // Run Step 3 Detection Pipeline across all input messages
+    const combinedInput = parsedReq.data.messages.map((m) => m.content ?? "").join("\n");
+    const evaluation = evaluateInputPipeline(combinedInput, policy);
+
+    // Short-circuit immediately if blocked!
+    if (evaluation.finalAction === "block") {
+      await repo.insertRequest(auth.tenantId, {
+        id: reqId,
+        provider,
+        model: parsedReq.data.model,
+        finalAction: "block",
+        promptRedacted: evaluation.sanitizedText,
+        responseRedacted: `[Blocked by ${BRAND.name} Gatekeeper]`,
+        latencyMs: Date.now() - startedAt,
+        createdAt: Date.now(),
+      });
+      await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
+
+      c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);
+      c.header(`${BRAND.headerPrefix}-Action`, "block");
+      return c.json(
+        {
+          error: {
+            message: `Request blocked by ${BRAND.name} security policy`,
+            type: "policy_violation",
+            request_id: reqId,
+            findings: evaluation.findings.map((f) => ({
+              id: f.id,
+              detector: f.detector,
+              rule_id: f.ruleId,
+              owasp_category: f.owaspCategory,
+              message: f.message,
+            })),
+          },
+        },
+        403
+      );
+    }
+
+    // Resolve upstream key
     const headerProviderKey = c.req.header(`${BRAND.headerPrefix}-Provider-Key`);
     const headerBaseUrl = c.req.header(`${BRAND.headerPrefix}-Provider-Base-Url`);
 
@@ -113,13 +158,26 @@ export function createV1Routes(customFetch?: typeof fetch) {
       upstreamBaseUrl = upstreamBaseUrl ?? storedCred.baseUrl;
     }
 
+    // Prepare sanitized messages (with PII redacted + canary token planted in system prompt)
+    const canaryToken = generateCanaryToken();
+    const outgoingMessages = parsedReq.data.messages.map((m, idx) => {
+      let content = m.content ?? "";
+      for (const [placeholder, original] of Object.entries(evaluation.redactionMap)) {
+        content = content.split(original).join(placeholder);
+      }
+      if (m.role === "system" && idx === 0 && policy.detectors.canary.enabled) {
+        content = injectCanaryIntoSystemPrompt(content, canaryToken);
+      }
+      return { ...m, content };
+    });
+
     let upstreamRes: Response;
     try {
       upstreamRes = await callUpstreamProvider({
         provider,
         apiKey: upstreamApiKey,
         baseUrl: upstreamBaseUrl,
-        body: parsedReq.data,
+        body: { ...parsedReq.data, messages: outgoingMessages },
         fetchImpl: customFetch,
       });
     } catch (err) {
@@ -127,21 +185,18 @@ export function createV1Routes(customFetch?: typeof fetch) {
       return c.json({ error: { message, type: "upstream_error" } }, 400);
     }
 
-    const reqId = `req_${crypto.randomUUID()}`;
-    const promptPreview = parsedReq.data.messages.map((m) => m.content ?? "").join("\n");
-
-    // Handle SSE Streaming passthrough
     if (parsedReq.data.stream && upstreamRes.body) {
       await repo.insertRequest(auth.tenantId, {
         id: reqId,
         provider,
         model: parsedReq.data.model,
-        finalAction: "allow",
-        promptRedacted: promptPreview,
+        finalAction: evaluation.finalAction,
+        promptRedacted: evaluation.sanitizedText,
         responseRedacted: "[streamed]",
         latencyMs: Date.now() - startedAt,
         createdAt: Date.now(),
       });
+      await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
 
       return new Response(upstreamRes.body, {
         status: upstreamRes.status,
@@ -151,17 +206,60 @@ export function createV1Routes(customFetch?: typeof fetch) {
           Connection: "keep-alive",
           [`${BRAND.headerPrefix}-Request-Id`]: reqId,
           [`${BRAND.headerPrefix}-Provider`]: provider,
+          [`${BRAND.headerPrefix}-Action`]: evaluation.finalAction,
         },
       });
     }
 
-    // Handle Non-Streaming JSON response
     const upstreamJson = (await upstreamRes.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: { message?: { role?: string; content?: string } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
 
-    const assistantText = upstreamJson.choices?.[0]?.message?.content ?? "";
+    let assistantText = upstreamJson.choices?.[0]?.message?.content ?? "";
+
+    // Check if the model leaked the planted Canary token
+    if (policy.detectors.canary.enabled) {
+      const canaryFinding = checkCanaryLeak({
+        responseText: assistantText,
+        canaryToken,
+        action: policy.detectors.canary.action,
+      });
+      if (canaryFinding) {
+        evaluation.findings.push(canaryFinding);
+        await repo.insertRequest(auth.tenantId, {
+          id: reqId,
+          provider,
+          model: parsedReq.data.model,
+          finalAction: "block",
+          promptRedacted: evaluation.sanitizedText,
+          responseRedacted: "[Blocked: Canary Token Leaked]",
+          latencyMs: Date.now() - startedAt,
+          createdAt: Date.now(),
+        });
+        await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
+
+        return c.json(
+          {
+            error: {
+              message: `Response blocked by ${BRAND.name}: system prompt canary token leak detected`,
+              type: "canary_leak",
+              request_id: reqId,
+            },
+          },
+          403
+        );
+      }
+    }
+
+    // Restore reversible PII redactions in the response if permitted
+    if (policy.detectors.pii.restoreOnResponse && Object.keys(evaluation.redactionMap).length > 0) {
+      assistantText = restoreRedactedValues(assistantText, evaluation.redactionMap);
+      if (upstreamJson.choices?.[0]?.message) {
+        upstreamJson.choices[0].message.content = assistantText;
+      }
+    }
+
     const promptTokens = upstreamJson.usage?.prompt_tokens ?? 0;
     const completionTokens = upstreamJson.usage?.completion_tokens ?? 0;
 
@@ -169,17 +267,19 @@ export function createV1Routes(customFetch?: typeof fetch) {
       id: reqId,
       provider,
       model: parsedReq.data.model,
-      finalAction: "allow",
+      finalAction: evaluation.finalAction,
       promptTokens,
       completionTokens,
-      promptRedacted: promptPreview,
+      promptRedacted: evaluation.sanitizedText,
       responseRedacted: assistantText,
       latencyMs: Date.now() - startedAt,
       createdAt: Date.now(),
     });
+    await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
 
     c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);
     c.header(`${BRAND.headerPrefix}-Provider`, provider);
+    c.header(`${BRAND.headerPrefix}-Action`, evaluation.finalAction);
     return c.json(upstreamJson, upstreamRes.status as 200);
   });
 

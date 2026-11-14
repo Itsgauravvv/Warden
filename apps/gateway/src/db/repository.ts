@@ -163,4 +163,33 @@ export class TenantRepository {
       .orderBy(desc(schema.requests.createdAt))
       .limit(limit);
   }
+  async insertFindings(tenantId: string, requestId: string, items: import("@warden/policy-schema").Finding[]) {
+    if (items.length === 0) return;
+    const now = Date.now();
+    await this.db.insert(schema.findings).values(
+      items.map((f) => ({
+        id: f.id,
+        tenantId,
+        requestId,
+        detector: f.detector,
+        ruleId: f.ruleId,
+        owaspCategory: f.owaspCategory,
+        confidence: f.confidence,
+        action: f.action,
+        direction: f.direction,
+        evidenceStart: f.evidenceSpan.start,
+        evidenceEnd: f.evidenceSpan.end,
+        snippetRedacted: f.evidenceSpan.snippetRedacted,
+        message: f.message,
+        createdAt: now,
+      }))
+    );
+  }
+
+  async getFindingsByRequestId(tenantId: string, requestId: string) {
+    return this.db
+      .select()
+      .from(schema.findings)
+      .where(and(eq(schema.findings.tenantId, tenantId), eq(schema.findings.requestId, requestId)));
+  }
 }
