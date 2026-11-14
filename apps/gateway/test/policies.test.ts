@@ -1,101 +1,14 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
-import * as schema from "../src/db/schema.js";
 import { TenantRepository } from "../src/db/repository.js";
 import { createGatewayApp } from "../src/index.js";
-
-async function setupPolicyTestDb() {
-  const client = createClient({ url: ":memory:" });
-  await client.executeMultiple(`
-    CREATE TABLE tenants (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      slug TEXT NOT NULL UNIQUE,
-      is_sandbox INTEGER NOT NULL DEFAULT 0,
-      retention_days INTEGER NOT NULL DEFAULT 30,
-      raw_payload_opt_in INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE projects (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      active_policy_id TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE api_keys (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT,
-      name TEXT NOT NULL,
-      prefix TEXT NOT NULL,
-      key_hash TEXT NOT NULL UNIQUE,
-      scopes_json TEXT NOT NULL,
-      expires_at INTEGER,
-      revoked_at INTEGER,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE policies (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      current_version_id TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE policy_versions (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      policy_id TEXT NOT NULL,
-      version_number INTEGER NOT NULL,
-      yaml_content TEXT NOT NULL,
-      parsed_json TEXT NOT NULL,
-      created_by TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE requests (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT,
-      session_id TEXT,
-      provider TEXT NOT NULL,
-      model TEXT NOT NULL,
-      final_action TEXT NOT NULL,
-      cache_hit INTEGER NOT NULL DEFAULT 0,
-      prompt_tokens INTEGER NOT NULL DEFAULT 0,
-      completion_tokens INTEGER NOT NULL DEFAULT 0,
-      cost_usd REAL NOT NULL DEFAULT 0,
-      latency_ms INTEGER NOT NULL DEFAULT 0,
-      prompt_redacted TEXT NOT NULL,
-      response_redacted TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE findings (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      request_id TEXT NOT NULL,
-      detector TEXT NOT NULL,
-      rule_id TEXT NOT NULL,
-      owasp_category TEXT NOT NULL,
-      confidence REAL NOT NULL,
-      action TEXT NOT NULL,
-      direction TEXT NOT NULL,
-      evidence_start INTEGER NOT NULL,
-      evidence_end INTEGER NOT NULL,
-      snippet_redacted TEXT NOT NULL,
-      message TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-  `);
-  return { client, db: drizzle(client, { schema }) };
-}
+import { createFullTestDb } from "./test-db.js";
 
 describe("Step 4: Policy-as-Code (YAML, Versions, Diffs, Rollback, Shadow Mode, Dry-Run)", () => {
   let repo: TenantRepository;
   let adminKey: string;
 
   beforeEach(async () => {
-    const setup = await setupPolicyTestDb();
+    const setup = await createFullTestDb();
     repo = new TenantRepository(setup.db);
     await repo.createTenant({ id: "t_pol", name: "Policy Org", slug: "policy-org" });
     const issued = await repo.createApiKey({

@@ -154,6 +154,17 @@ export function createV1Routes(deps: V1RouteDependencies) {
         createdAt: Date.now(),
       });
       await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
+      await repo.appendAuditRecord({
+   tenantId: auth.tenantId,
+   requestId: reqId,
+   eventType: "proxy.request.blocked",
+   payload: {
+     requestId: reqId,
+     model: parsedReq.data.model,
+     action: "block",
+     findingRuleIds: evaluation.findings.map((f) => f.ruleId),
+   },
+ });
 
       c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);
       c.header(`${BRAND.headerPrefix}-Action`, "block");
@@ -376,6 +387,18 @@ export function createV1Routes(deps: V1RouteDependencies) {
       createdAt: Date.now(),
     });
     await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
+    await repo.appendAuditRecord({
+        tenantId: auth.tenantId,
+        requestId: reqId,
+        eventType: "proxy.request.completed",
+        payload: {
+            requestId: reqId,
+            model: parsedReq.data.model,
+            action: evaluation.finalAction,
+            promptTokens,
+            completionTokens,
+        },
+    });
 
     c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);
     c.header(`${BRAND.headerPrefix}-Provider`, provider);

@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, lt } from "drizzle-orm";
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
 import * as schema from "./schema.js";
 import { generateTenantApiKey, sha256Hex, type ApiKeyScope } from "../auth/api-key.js";
@@ -405,5 +405,225 @@ export class TenantRepository {
       )
       .limit(1);
     return rows[0] ?? null;
+  }
+  /**
+   * Appends a tamper-evident SHA-256 hash-chained audit record for a tenant ("Ledger").
+   */
+  async appendAuditRecord(input: {
+    tenantId: string;
+    requestId?: string | null;
+    eventType: string;
+    payload: Record<string, unknown>;
+  }) {
+    const {
+      GENESIS_PREV_HASH,
+      canonicalizeJson,
+      computeAuditRecordHash,
+    } = await import("../crypto/hash-chain.js");
+
+    const lastRows = await this.db
+      .select()
+      .from(schema.auditRecords)
+      .where(eq(schema.auditRecords.tenantId, input.tenantId))
+      .orderBy(desc(schema.auditRecords.seq))
+      .limit(1);
+
+    const lastRecord = lastRows[0];
+    const nextSeq = (lastRecord?.seq ?? 0) + 1;
+    const prevHash = lastRecord?.recordHash ?? GENESIS_PREV_HASH;
+    const canonicalJson = canonicalizeJson(input.payload);
+    const recordHash = await computeAuditRecordHash(prevHash, canonicalJson);
+    const id = `aud_${crypto.randomUUID()}`;
+    const createdAt = Date.now();
+
+    await this.db.insert(schema.auditRecords).values({
+      id,
+      tenantId: input.tenantId,
+      seq: nextSeq,
+      requestId: input.requestId ?? null,
+      eventType: input.eventType,
+      canonicalJson,
+      prevHash,
+      recordHash,
+      createdAt,
+    });
+
+    return {
+      id,
+      seq: nextSeq,
+      prevHash,
+      recordHash,
+      canonicalJson,
+      createdAt,
+    };
+  }
+
+  /**
+   * Lists a tenant's audit chain in ascending sequence order and verifies every SHA-256 link.
+   */
+  async verifyTenantAuditChain(tenantId: string) {
+    const { verifyAuditChainLinks } = await import("../crypto/hash-chain.js");
+    const rows = await this.db
+      .select()
+      .from(schema.auditRecords)
+      .where(eq(schema.auditRecords.tenantId, tenantId))
+      .orderBy(asc(schema.auditRecords.seq));
+
+    const result = await verifyAuditChainLinks(
+      rows.map((r) => ({
+        seq: r.seq,
+        prevHash: r.prevHash,
+        canonicalJson: r.canonicalJson,
+        recordHash: r.recordHash,
+      }))
+    );
+
+    return {
+      ...result,
+      records: rows,
+    };
+  }
+
+  /**
+   * Seals all unsealed audit records for a tenant into a signed batch with an R2 archive key.
+   */
+  async sealAuditBatch(tenantId: string) {
+    const { sha256Hex } = await import("../auth/api-key.js");
+    const { hmacSha256Hex } = await import("../crypto/hash-chain.js");
+
+    const rows = await this.db
+      .select()
+      .from(schema.auditRecords)
+      .where(eq(schema.auditRecords.tenantId, tenantId))
+      .orderBy(asc(schema.auditRecords.seq));
+
+    if (rows.length === 0) {
+      throw new Error("No audit records to seal");
+    }
+
+    const firstSeq = rows[0]!.seq;
+    const lastSeq = rows[rows.length - 1]!.seq;
+    const combinedHashes = rows.map((r) => r.recordHash).join(":");
+    const rootHash = await sha256Hex(combinedHashes);
+    const signature = await hmacSha256Hex(
+      this.encryptionSecret,
+      `${tenantId}:${firstSeq}:${lastSeq}:${rootHash}`
+    );
+    const batchId = `batch_${crypto.randomUUID()}`;
+    const r2ArchiveKey = `audit-archives/${tenantId}/${batchId}.json`;
+
+    await this.db.insert(schema.auditBatches).values({
+      id: batchId,
+      tenantId,
+      firstSeq,
+      lastSeq,
+      rootHash,
+      signature,
+      r2ArchiveKey,
+      createdAt: Date.now(),
+    });
+
+    return {
+      batchId,
+      tenantId,
+      firstSeq,
+      lastSeq,
+      rootHash,
+      signature,
+      r2ArchiveKey,
+    };
+  }
+
+  /**
+   * Registers an HMAC-signed webhook endpoint for a tenant.
+   */
+  async createWebhook(input: {
+    id: string;
+    tenantId: string;
+    url: string;
+    signingSecret: string;
+    events: string[];
+  }) {
+    const { validateSafeUpstreamUrl } = await import("../adapters/ssrf-guard.js");
+    validateSafeUpstreamUrl(input.url);
+
+    const { encryptedHex, ivHex } = await encryptSecret(input.signingSecret, this.encryptionSecret);
+    await this.db.insert(schema.webhooks).values({
+      id: input.id,
+      tenantId: input.tenantId,
+      url: input.url,
+      signingSecretEncrypted: `${ivHex}:${encryptedHex}`,
+      eventsJson: JSON.stringify(input.events),
+      active: true,
+      createdAt: Date.now(),
+    });
+  }
+
+  async listActiveWebhooks(tenantId: string) {
+    const rows = await this.db
+      .select()
+      .from(schema.webhooks)
+      .where(and(eq(schema.webhooks.tenantId, tenantId), eq(schema.webhooks.active, true)));
+
+    const out: { id: string; url: string; signingSecret: string; events: string[] }[] = [];
+    for (const r of rows) {
+      const [ivHex, encryptedHex] = r.signingSecretEncrypted.split(":");
+      if (!ivHex || !encryptedHex) continue;
+      const signingSecret = await decryptSecret(encryptedHex, ivHex, this.encryptionSecret);
+      out.push({
+        id: r.id,
+        url: r.url,
+        signingSecret,
+        events: JSON.parse(r.eventsJson) as string[],
+      });
+    }
+    return out;
+  }
+
+  async recordWebhookDelivery(input: {
+    id: string;
+    tenantId: string;
+    webhookId: string;
+    idempotencyKey: string;
+    status: "pending" | "delivered" | "failed" | "dlq";
+    attempts: number;
+    lastStatusCode?: number | null;
+  }) {
+    const existing = await this.db
+      .select()
+      .from(schema.webhookDeliveries)
+      .where(eq(schema.webhookDeliveries.idempotencyKey, input.idempotencyKey))
+      .limit(1);
+
+    if (existing.length === 0) {
+      await this.db.insert(schema.webhookDeliveries).values({
+        id: input.id,
+        tenantId: input.tenantId,
+        webhookId: input.webhookId,
+        idempotencyKey: input.idempotencyKey,
+        status: input.status,
+        attempts: input.attempts,
+        lastStatusCode: input.lastStatusCode ?? null,
+        createdAt: Date.now(),
+      });
+    } else {
+      await this.db
+        .update(schema.webhookDeliveries)
+        .set({
+          status: input.status,
+          attempts: input.attempts,
+          lastStatusCode: input.lastStatusCode ?? null,
+        })
+        .where(eq(schema.webhookDeliveries.idempotencyKey, input.idempotencyKey));
+    }
+  }
+
+  /**
+   * Purges requests older than cutoffTimestampMs for a tenant (scheduled cron retention cleanup).
+   */
+  async purgeExpiredRequests(tenantId: string, cutoffTimestampMs: number) {
+    await this.db
+      .delete(schema.requests)
+      .where(and(eq(schema.requests.tenantId, tenantId), lt(schema.requests.createdAt, cutoffTimestampMs)));
   }
 }
