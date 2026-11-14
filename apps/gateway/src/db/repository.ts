@@ -2,11 +2,16 @@ import { and, desc, eq } from "drizzle-orm";
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
 import * as schema from "./schema.js";
 import { generateTenantApiKey, sha256Hex, type ApiKeyScope } from "../auth/api-key.js";
+import { decryptSecret, encryptSecret } from "../crypto/aes-gcm.js";
+import type { ProviderName } from "../adapters/provider.js";
 
 export type WardenDb = BaseSQLiteDatabase<"sync" | "async", unknown, typeof schema>;
 
 export class TenantRepository {
-  constructor(private readonly db: WardenDb) {}
+  constructor(
+    private readonly db: WardenDb,
+    private readonly encryptionSecret = "warden-local-dev-master-secret-32b!"
+  ) {}
 
   async createTenant(input: { id: string; name: string; slug: string; isSandbox?: boolean }) {
     const now = Date.now();
@@ -19,9 +24,6 @@ export class TenantRepository {
     });
   }
 
-  /**
-   * Issues a new API key for a specific tenant. Returns rawKey ONCE; stores only keyHash.
-   */
   async createApiKey(input: {
     id: string;
     tenantId: string;
@@ -46,14 +48,11 @@ export class TenantRepository {
       id: input.id,
       tenantId: input.tenantId,
       prefix: generated.prefix,
-      rawKey: generated.rawKey, // Shown once!
+      rawKey: generated.rawKey,
       scopes: input.scopes,
     };
   }
 
-  /**
-   * Authenticates a Bearer token by hashing it and checking revocation + expiry.
-   */
   async verifyApiKey(rawKey: string, now = Date.now()) {
     const keyHash = await sha256Hex(rawKey);
     const rows = await this.db
@@ -76,9 +75,6 @@ export class TenantRepository {
     };
   }
 
-  /**
-   * Instant key revocation scoped strictly to the owning tenant.
-   */
   async revokeApiKey(tenantId: string, keyId: string) {
     await this.db
       .update(schema.apiKeys)
@@ -87,8 +83,61 @@ export class TenantRepository {
   }
 
   /**
-   * Strictly tenant-scoped request insertion.
+   * Encrypts an upstream provider key (e.g. Gemini API key) with AES-256-GCM before saving.
    */
+  async saveProviderCredential(input: {
+    id: string;
+    tenantId: string;
+    provider: ProviderName;
+    rawApiKey: string;
+    baseUrl?: string;
+  }) {
+    if (input.baseUrl) {
+      // Validate SSRF at configuration time as well as runtime
+      const { validateSafeUpstreamUrl } = await import("../adapters/ssrf-guard.js");
+      validateSafeUpstreamUrl(input.baseUrl);
+    }
+
+    const { encryptedHex, ivHex } = await encryptSecret(input.rawApiKey, this.encryptionSecret);
+
+    await this.db.insert(schema.providerCredentials).values({
+      id: input.id,
+      tenantId: input.tenantId,
+      provider: input.provider,
+      baseUrl: input.baseUrl ?? null,
+      encryptedApiKey: encryptedHex,
+      iv: ivHex,
+      createdAt: Date.now(),
+    });
+  }
+
+  /**
+   * Retrieves and decrypts the tenant's upstream credential for the given provider.
+   */
+  async getDecryptedProviderCredential(tenantId: string, provider: ProviderName) {
+    const rows = await this.db
+      .select()
+      .from(schema.providerCredentials)
+      .where(
+        and(
+          eq(schema.providerCredentials.tenantId, tenantId),
+          eq(schema.providerCredentials.provider, provider)
+        )
+      )
+      .orderBy(desc(schema.providerCredentials.createdAt))
+      .limit(1);
+
+    const row = rows[0];
+    if (!row) return null;
+
+    const apiKey = await decryptSecret(row.encryptedApiKey, row.iv, this.encryptionSecret);
+    return {
+      provider: row.provider,
+      apiKey,
+      baseUrl: row.baseUrl,
+    };
+  }
+
   async insertRequest(tenantId: string, req: Omit<typeof schema.requests.$inferInsert, "tenantId">) {
     await this.db.insert(schema.requests).values({
       ...req,
@@ -96,10 +145,6 @@ export class TenantRepository {
     });
   }
 
-  /**
-   * Strictly tenant-scoped request lookup.
-   * Cross-tenant reads are impossible because tenantId is enforced in the WHERE clause.
-   */
   async getRequestById(tenantId: string, requestId: string) {
     const rows = await this.db
       .select()

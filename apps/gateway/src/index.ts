@@ -3,6 +3,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { BRAND } from "@warden/brand";
 import type { TenantRepository } from "./db/repository.js";
 import type { ApiKeyScope } from "./auth/api-key.js";
+import { createV1Routes } from "./routes/v1.js";
 
 export interface AuthContext {
   tenantId: string;
@@ -16,10 +17,9 @@ export type AppVariables = {
   repo: TenantRepository;
 };
 
-export function createGatewayApp(repo?: TenantRepository) {
+export function createGatewayApp(repo?: TenantRepository, customFetch?: typeof fetch) {
   const app = new Hono<{ Variables: AppVariables }>();
 
-  // Hardened security headers on every response
   app.use("*", secureHeaders());
   app.use("*", async (c, next) => {
     c.header(`${BRAND.headerPrefix}-Gate`, BRAND.name);
@@ -29,7 +29,6 @@ export function createGatewayApp(repo?: TenantRepository) {
     await next();
   });
 
-  // Liveness & Readiness probes
   app.get("/healthz", (c) =>
     c.json({
       status: "ok",
@@ -42,6 +41,9 @@ export function createGatewayApp(repo?: TenantRepository) {
     const isReady = Boolean(c.get("repo"));
     return c.json({ ready: isReady }, isReady ? 200 : 503);
   });
+
+  // Mount OpenAI-compatible /v1 proxy routes (defaults to Gemini)
+  app.route("/v1", createV1Routes(customFetch));
 
   // Tenant API Key Auth Middleware for /admin/v1/*
   app.use("/admin/v1/*", async (c, next) => {
@@ -66,7 +68,6 @@ export function createGatewayApp(repo?: TenantRepository) {
     await next();
   });
 
-  // Tenant-isolated request inspection endpoint
   app.get("/admin/v1/requests/:id", async (c) => {
     const auth = c.get("auth");
     if (!auth.scopes.includes("admin:read")) {
