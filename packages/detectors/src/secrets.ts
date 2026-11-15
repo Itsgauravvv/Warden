@@ -21,7 +21,7 @@ export function calculateShannonEntropy(str: string): number {
 const SECRET_RULES: { id: string; label: string; regex: RegExp }[] = [
   { id: "secret.aws_access_key", label: "AWS Access Key ID", regex: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
   { id: "secret.github_pat", label: "GitHub Personal Access Token", regex: /\bgh[pousr]_[A-Za-z0-9_]{30,255}\b/g },
-  { id: "secret.google_api_key", label: "Google / Gemini API Key", regex: /\bAIzaSy[A-Za-z0-9_-]{33}\b/g },
+  { id: "secret.google_api_key", label: "Google / Gemini API Key", regex: /\bAIzaSy[A-Za-z0-9_-]{30,40}\b/g },
   { id: "secret.openai_key", label: "OpenAI API Key", regex: /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g },
   { id: "secret.slack_token", label: "Slack Token", regex: /\bxox[baprs]-[0-9A-Za-z-]{10,48}\b/g },
   { id: "secret.private_key_pem", label: "PEM Private Key", regex: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g },

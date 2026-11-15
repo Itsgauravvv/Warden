@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { runEvaluationSuite } from "@warden/eval";
 import { createAdminAuditRoutes } from "./routes/admin-audit.js";
 import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
@@ -70,6 +71,25 @@ export function createGatewayApp(
   app.get("/readyz", (c) => {
     const isReady = Boolean(c.get("repo"));
     return c.json({ ready: isReady }, isReady ? 200 : 503);
+  });
+  // Public evaluation benchmark endpoint for the /eval transparency page
+  app.get("/eval/summary", (c) => {
+    const suite = runEvaluationSuite();
+    return c.json({
+      data: {
+        tpr: suite.tpr,
+        fpr: suite.fpr,
+        totalCases: suite.totalCases,
+        truePositives: suite.truePositives,
+        falsePositives: suite.falsePositives,
+        p95LatencyMs: suite.p95LatencyMs,
+        byCategory: suite.byCategory,
+        licenses: suite.licenses,
+        regressionGatePassed: suite.regressionGatePassed,
+        disclaimer:
+          "Detection is probabilistic and defense-in-depth; no gateway catches 100% of novel attacks.",
+      },
+    });
   });
 
   // Mount OpenAI-compatible /v1 proxy routes (defaults to Gemini)

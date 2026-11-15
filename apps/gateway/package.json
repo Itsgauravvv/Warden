@@ -12,6 +12,7 @@
   "dependencies": {
     "@warden/brand": "workspace:*",
     "@warden/detectors": "workspace:*",
+    "@warden/eval": "workspace:*",
     "@warden/policy-schema": "workspace:*",
     "drizzle-orm": "^0.38.3",
     "hono": "^4.6.15",
