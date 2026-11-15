@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+:root,
+[data-theme="light"] {
+  --bg-primary: #f3ecdc;
+  --bg-card: #fbf7ee;
+  --bg-elevated: #ebe2ce;
+  --ink: #14121b;
+  --ink-muted: #524c61;
+  --border-ink: #14121b;
+  --shadow-ink: #14121b;
+
+  /* Verdict & Signal Colors */
+  --signal-allow: #2fd27a;
+  --signal-redact: #ffb300;
+  --signal-block: #ff4d4d;
+  --signal-cache: #3d8bff;
+  --signal-accent: #7c5cff;
+
+  /* Deep Dark Sculk Accents (Minecraft Warden touch) */
+  --sculk-Abyss: #061c24;
+  --sculk-teal: #0b4f60;
+  --sculk-cyan: #00b8c8;
+  --sculk-soul: #7df9ff;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #0d0b14;
+  --bg-card: #141220;
+  --bg-elevated: #081822;
+  --ink: #f3ecdc;
+  --ink-muted: #9ba8b8;
+  --border-ink: #29dfeb;
+  --shadow-ink: #040d12;
+
+  --signal-allow: #2fd27a;
+  --signal-redact: #ffb300;
+  --signal-block: #ff4d4d;
+  --signal-cache: #3d8bff;
+  --signal-accent: #7c5cff;
+
+  --sculk-Abyss: #041016;
+  --sculk-teal: #0e6b7d;
+  --sculk-cyan: #29dfeb;
+  --sculk-soul: #b8ffff;
+}
+
+[data-theme="high-contrast"] {
+  --bg-primary: #000000;
+  --bg-card: #0a0a0a;
+  --bg-elevated: #141414;
+  --ink: #ffffff;
+  --ink-muted: #e0e0e0;
+  --border-ink: #ffffff;
+  --shadow-ink: #29dfeb;
+
+  --signal-allow: #00ff66;
+  --signal-redact: #ffd000;
+  --signal-block: #ff3333;
+  --signal-cache: #33aaff;
+  --signal-accent: #b28dff;
+  --sculk-cyan: #00ffff;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--ink);
+  font-family: var(--font-space), sans-serif;
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--ink) 12%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 20px 20px;
+  min-height: 100vh;
+}
+
+/* Neo-Brutalist Gatehouse Card */
+.gate-card {
+  background-color: var(--bg-card);
+  border: 2px solid var(--border-ink);
+  border-radius: 16px;
+  box-shadow: 0 6px 0 var(--shadow-ink);
+  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gate-card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 0 var(--shadow-ink);
+}
+
+.gate-card-interactive:active {
+  transform: translateY(3px);
+  box-shadow: 0 3px 0 var(--shadow-ink);
+}
+
+/* Optional CRT Scanlines Overlay in Night Watch */
+.crt-scanlines::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(41, 223, 235, 0.03) 3px,
+    rgba(0, 0, 0, 0.12) 4px
+  );
+}
+
+/* Accessible visible focus ring */
+:focus-visible {
+  outline: 3px solid var(--sculk-cyan);
+  outline-offset: 2px;
+}
