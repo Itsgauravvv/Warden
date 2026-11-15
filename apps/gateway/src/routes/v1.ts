@@ -12,6 +12,12 @@ import type { TenantRepository } from "../db/repository.js";
 import type { RateLimitEngine } from "../durable-objects/rate-limiter.js";
 import type { SemanticCache } from "../cache/semantic-cache.js";
 import { sha256Hex } from "../auth/api-key.js";
+import { createScannedSseStream } from "../streaming/sse-scanner.js";
+import {
+  analyzeUntrustedToolResults,
+  evaluateToolCallsFirewall,
+  type IncomingToolCall,
+} from "../firewall/tool-firewall.js";
 import {
   callUpstreamProvider,
   ChatCompletionRequestSchema,
@@ -27,7 +33,6 @@ export interface V1RouteDependencies {
   semanticCache: SemanticCache;
 }
 
-// Estimated cost per 1K tokens (Gemini 2.5 Flash pricing baseline for budget tracking)
 function estimateCostUsd(promptTokens: number, completionTokens: number): number {
   return Number(((promptTokens * 0.00015 + completionTokens * 0.0006) / 1000).toFixed(6));
 }
@@ -103,7 +108,7 @@ export function createV1Routes(deps: V1RouteDependencies) {
       );
     }
 
-    // 1. Check Toll (Token-Bucket Rate Limit & Token/Cost Budgets)
+    // 1. Check Toll (Rate Limit & Budgets)
     const rateCheck = deps.rateLimiter.checkAndConsumeRequest({
       tenantId: auth.tenantId,
       scope: "tenant",
@@ -135,16 +140,23 @@ export function createV1Routes(deps: V1RouteDependencies) {
     const provider: ProviderName = providerParse.data;
 
     const reqId = `req_${crypto.randomUUID()}`;
+    const sessionId = c.req.header(`${BRAND.headerPrefix}-Session-Id`) ?? null;
     const projectHeader = c.req.header(`${BRAND.headerPrefix}-Project-Id`) ?? auth.projectId;
     const policy = await repo.resolveEffectivePolicy(auth.tenantId, projectHeader);
 
-    // 2. Run Detection Pipeline across all input messages
-    const combinedInput = parsedReq.data.messages.map((m) => m.content ?? "").join("\n");
-    const evaluation = evaluateInputPipeline(combinedInput, policy);
+    // 2. Analyze untrusted tool_result messages for taint, and evaluate non-tool messages
+    const taintContext = analyzeUntrustedToolResults(parsedReq.data.messages, policy);
+    const nonToolMessagesText = parsedReq.data.messages
+      .filter((m) => m.role !== "tool")
+      .map((m) => m.content ?? "")
+      .join("\n");
+
+    const evaluation = evaluateInputPipeline(nonToolMessagesText, policy);
 
     if (evaluation.finalAction === "block") {
       await repo.insertRequest(auth.tenantId, {
         id: reqId,
+        sessionId,
         provider,
         model: parsedReq.data.model,
         finalAction: "block",
@@ -155,16 +167,16 @@ export function createV1Routes(deps: V1RouteDependencies) {
       });
       await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
       await repo.appendAuditRecord({
-   tenantId: auth.tenantId,
-   requestId: reqId,
-   eventType: "proxy.request.blocked",
-   payload: {
-     requestId: reqId,
-     model: parsedReq.data.model,
-     action: "block",
-     findingRuleIds: evaluation.findings.map((f) => f.ruleId),
-   },
- });
+        tenantId: auth.tenantId,
+        requestId: reqId,
+        eventType: "proxy.request.blocked",
+        payload: {
+          requestId: reqId,
+          model: parsedReq.data.model,
+          action: "block",
+          findingRuleIds: evaluation.findings.map((f) => f.ruleId),
+        },
+      });
 
       c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);
       c.header(`${BRAND.headerPrefix}-Action`, "block");
@@ -187,9 +199,9 @@ export function createV1Routes(deps: V1RouteDependencies) {
       );
     }
 
-    // 3. Check Echo (Semantic Cache) — strictly isolated by (tenantId, policyHash, model)
+    // 3. Check Echo (Semantic Cache)
     const policyHash = (await sha256Hex(JSON.stringify(policy))).slice(0, 16);
-    if (policy.semanticCache.enabled && !parsedReq.data.stream) {
+    if (policy.semanticCache.enabled && !parsedReq.data.stream && !taintContext.isTainted) {
       const cacheHit = deps.semanticCache.lookup({
         tenantId: auth.tenantId,
         policyHash,
@@ -201,13 +213,11 @@ export function createV1Routes(deps: V1RouteDependencies) {
       if (cacheHit) {
         await repo.insertRequest(auth.tenantId, {
           id: reqId,
+          sessionId,
           provider,
           model: parsedReq.data.model,
           finalAction: evaluation.finalAction,
           cacheHit: true,
-          promptTokens: 0,
-          completionTokens: 0,
-          costUsd: 0,
           promptRedacted: evaluation.sanitizedText,
           responseRedacted: "[Served by Echo Semantic Cache]",
           latencyMs: Date.now() - startedAt,
@@ -274,9 +284,11 @@ export function createV1Routes(deps: V1RouteDependencies) {
       return c.json({ error: { message, type: "upstream_error" } }, 400);
     }
 
+    // 5. Handle Streaming SSE with Sliding-Window Output Scanner
     if (parsedReq.data.stream && upstreamRes.body) {
       await repo.insertRequest(auth.tenantId, {
         id: reqId,
+        sessionId,
         provider,
         model: parsedReq.data.model,
         finalAction: evaluation.finalAction,
@@ -287,7 +299,16 @@ export function createV1Routes(deps: V1RouteDependencies) {
       });
       await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
 
-      return new Response(upstreamRes.body, {
+      const scannedStream = createScannedSseStream(upstreamRes.body, {
+        policy,
+        canaryToken,
+        redactionMap: evaluation.redactionMap,
+        onViolation: async (finding) => {
+          await repo.insertFindings(auth.tenantId, reqId, [finding]);
+        },
+      });
+
+      return new Response(scannedStream, {
         status: upstreamRes.status,
         headers: {
           "Content-Type": "text/event-stream; charset=utf-8",
@@ -300,13 +321,103 @@ export function createV1Routes(deps: V1RouteDependencies) {
       });
     }
 
+    // 6. Handle Non-Streaming JSON Response + Agent Tool-Call Firewall
     const upstreamJson = (await upstreamRes.json()) as {
-      choices?: { message?: { role?: string; content?: string } }[];
+      choices?: {
+        message?: {
+          role?: string;
+          content?: string | null;
+          tool_calls?: IncomingToolCall[];
+        };
+      }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
 
     let assistantText = upstreamJson.choices?.[0]?.message?.content ?? "";
+    const incomingToolCalls = upstreamJson.choices?.[0]?.message?.tool_calls ?? [];
 
+    // Inspect Agent Tool Calls through Firewall if present
+    if (policy.toolFirewall.enabled && incomingToolCalls.length > 0) {
+      // Save request row first so toolCalls foreign key is satisfied
+      await repo.insertRequest(auth.tenantId, {
+        id: reqId,
+        sessionId,
+        provider,
+        model: parsedReq.data.model,
+        finalAction: evaluation.finalAction,
+        promptRedacted: evaluation.sanitizedText,
+        responseRedacted: assistantText || "[tool_calls]",
+        latencyMs: Date.now() - startedAt,
+        createdAt: Date.now(),
+      });
+
+      const decisions = evaluateToolCallsFirewall({
+        toolCalls: incomingToolCalls,
+        policy,
+        taintContext,
+      });
+
+      const approvalIds: string[] = [];
+      for (const dec of decisions) {
+        evaluation.findings.push(...dec.findings);
+        const recorded = await repo.recordToolCallAndApproval({
+          id: dec.toolCallId || `tc_${crypto.randomUUID()}`,
+          tenantId: auth.tenantId,
+          requestId: reqId,
+          sessionId,
+          toolName: dec.toolName,
+          argumentsRedactedJson: dec.argumentsRedactedJson,
+          taintDetected: dec.taintDetected,
+          status: dec.status,
+        });
+        if (recorded.approvalId) {
+          approvalIds.push(recorded.approvalId);
+        }
+      }
+
+      await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
+
+      const blockedDecision = decisions.find((d) => d.status === "blocked");
+      if (blockedDecision && policy.mode === "enforce") {
+        c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);
+        c.header(`${BRAND.headerPrefix}-Action`, "block");
+        return c.json(
+          {
+            error: {
+              message: `Agent tool call '${blockedDecision.toolName}' blocked by ${BRAND.name} Tool Firewall`,
+              type: "tool_firewall_violation",
+              request_id: reqId,
+              taint_detected: blockedDecision.taintDetected,
+              findings: blockedDecision.findings,
+            },
+          },
+          403
+        );
+      }
+
+      const pendingDecision = decisions.find((d) => d.status === "pending_approval");
+      if (pendingDecision && policy.mode === "enforce") {
+        c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);
+        c.header(`${BRAND.headerPrefix}-Action`, "flag");
+        return c.json(
+          {
+            error: {
+              message: `Agent tool call '${pendingDecision.toolName}' requires human approval before execution`,
+              type: "approval_required",
+              request_id: reqId,
+              approval_ids: approvalIds,
+            },
+          },
+          202
+        );
+      }
+
+      c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);
+      c.header(`${BRAND.headerPrefix}-Action`, evaluation.finalAction);
+      return c.json(upstreamJson, 200);
+    }
+
+    // Check Canary Token Leak on standard assistant response
     if (policy.detectors.canary.enabled) {
       const canaryFinding = checkCanaryLeak({
         responseText: assistantText,
@@ -317,6 +428,7 @@ export function createV1Routes(deps: V1RouteDependencies) {
         evaluation.findings.push(canaryFinding);
         await repo.insertRequest(auth.tenantId, {
           id: reqId,
+          sessionId,
           provider,
           model: parsedReq.data.model,
           finalAction: "block",
@@ -351,14 +463,12 @@ export function createV1Routes(deps: V1RouteDependencies) {
     const completionTokens = upstreamJson.usage?.completion_tokens ?? 10;
     const costUsd = estimateCostUsd(promptTokens, completionTokens);
 
-    // Record token & USD usage in Toll (RateLimiter)
     deps.rateLimiter.recordUsage({
       tenantId: auth.tenantId,
       totalTokens: promptTokens + completionTokens,
       costUsd,
     });
 
-    // Store in Echo (Semantic Cache) if enabled
     if (policy.semanticCache.enabled && upstreamRes.status === 200) {
       deps.semanticCache.store({
         tenantId: auth.tenantId,
@@ -375,6 +485,7 @@ export function createV1Routes(deps: V1RouteDependencies) {
 
     await repo.insertRequest(auth.tenantId, {
       id: reqId,
+      sessionId,
       provider,
       model: parsedReq.data.model,
       finalAction: evaluation.finalAction,
@@ -388,16 +499,16 @@ export function createV1Routes(deps: V1RouteDependencies) {
     });
     await repo.insertFindings(auth.tenantId, reqId, evaluation.findings);
     await repo.appendAuditRecord({
-        tenantId: auth.tenantId,
+      tenantId: auth.tenantId,
+      requestId: reqId,
+      eventType: "proxy.request.completed",
+      payload: {
         requestId: reqId,
-        eventType: "proxy.request.completed",
-        payload: {
-            requestId: reqId,
-            model: parsedReq.data.model,
-            action: evaluation.finalAction,
-            promptTokens,
-            completionTokens,
-        },
+        model: parsedReq.data.model,
+        action: evaluation.finalAction,
+        promptTokens,
+        completionTokens,
+      },
     });
 
     c.header(`${BRAND.headerPrefix}-Request-Id`, reqId);

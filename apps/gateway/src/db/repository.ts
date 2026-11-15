@@ -626,4 +626,115 @@ export class TenantRepository {
       .delete(schema.requests)
       .where(and(eq(schema.requests.tenantId, tenantId), lt(schema.requests.createdAt, cutoffTimestampMs)));
   }
+  /**
+   * Records a session graph node, tool call inspection result, and optional human approval queue item.
+   */
+  async recordToolCallAndApproval(input: {
+    id: string;
+    tenantId: string;
+    requestId: string;
+    sessionId?: string | null;
+    toolName: string;
+    argumentsRedactedJson: string;
+    taintDetected: boolean;
+    status: "allowed" | "blocked" | "pending_approval" | "approved" | "denied";
+  }) {
+    const now = Date.now();
+
+    if (input.sessionId) {
+      const existingSession = await this.db
+        .select()
+        .from(schema.sessions)
+        .where(and(eq(schema.sessions.tenantId, input.tenantId), eq(schema.sessions.id, input.sessionId)))
+        .limit(1);
+
+      if (existingSession.length === 0) {
+        await this.db.insert(schema.sessions).values({
+          id: input.sessionId,
+          tenantId: input.tenantId,
+          tainted: input.taintDetected,
+          createdAt: now,
+        });
+      } else if (input.taintDetected) {
+        await this.db
+          .update(schema.sessions)
+          .set({ tainted: true })
+          .where(and(eq(schema.sessions.tenantId, input.tenantId), eq(schema.sessions.id, input.sessionId)));
+      }
+    }
+
+    await this.db.insert(schema.toolCalls).values({
+      id: input.id,
+      tenantId: input.tenantId,
+      requestId: input.requestId,
+      sessionId: input.sessionId ?? null,
+      toolName: input.toolName,
+      argumentsRedactedJson: input.argumentsRedactedJson,
+      taintDetected: input.taintDetected,
+      status: input.status,
+      createdAt: now,
+    });
+
+    if (input.status === "pending_approval") {
+      const approvalId = `apr_${crypto.randomUUID()}`;
+      await this.db.insert(schema.approvals).values({
+        id: approvalId,
+        tenantId: input.tenantId,
+        toolCallId: input.id,
+        status: "pending",
+        expiresAt: now + 3600_000, // 1 hour expiry
+        createdAt: now,
+      });
+      return { approvalId };
+    }
+
+    return { approvalId: null };
+  }
+
+  async listPendingApprovals(tenantId: string) {
+    return this.db
+      .select()
+      .from(schema.approvals)
+      .where(and(eq(schema.approvals.tenantId, tenantId), eq(schema.approvals.status, "pending")))
+      .orderBy(desc(schema.approvals.createdAt));
+  }
+
+  async decideApproval(input: {
+    tenantId: string;
+    approvalId: string;
+    decision: "approved" | "rejected";
+    decidedBy: string;
+    reason?: string;
+  }) {
+    const rows = await this.db
+      .select()
+      .from(schema.approvals)
+      .where(and(eq(schema.approvals.tenantId, input.tenantId), eq(schema.approvals.id, input.approvalId)))
+      .limit(1);
+
+    const approval = rows[0];
+    if (!approval) return null;
+
+    await this.db
+      .update(schema.approvals)
+      .set({
+        status: input.decision,
+        decidedBy: input.decidedBy,
+        reason: input.reason ?? null,
+      })
+      .where(and(eq(schema.approvals.tenantId, input.tenantId), eq(schema.approvals.id, input.approvalId)));
+
+    await this.db
+      .update(schema.toolCalls)
+      .set({ status: input.decision === "approved" ? "approved" : "denied" })
+      .where(
+        and(eq(schema.toolCalls.tenantId, input.tenantId), eq(schema.toolCalls.id, approval.toolCallId))
+      );
+
+    return {
+      approvalId: approval.id,
+      toolCallId: approval.toolCallId,
+      status: input.decision,
+    };
+  }
 }

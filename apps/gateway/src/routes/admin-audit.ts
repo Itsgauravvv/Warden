@@ -87,6 +87,41 @@ export function createAdminAuditRoutes(injectedRepo?: TenantRepository) {
       return c.json({ error: { message: msg } }, 400);
     }
   });
+  // List pending human-in-the-loop tool approvals
+  router.get("/approvals", async (c) => {
+    const auth = c.get("auth");
+    if (!auth.scopes.includes("admin:read")) {
+      return c.json({ error: { message: "Requires admin:read scope", code: "forbidden" } }, 403);
+    }
+    const items = await c.get("repo").listPendingApprovals(auth.tenantId);
+    return c.json({ data: items });
+  });
 
+  // Approve or reject a held high-risk tool call
+  router.post("/approvals/:id/decide", async (c) => {
+    const auth = c.get("auth");
+    if (!auth.scopes.includes("admin:write")) {
+      return c.json({ error: { message: "Requires admin:write scope", code: "forbidden" } }, 403);
+    }
+    const bodySchema = z.object({
+      decision: z.enum(["approved", "rejected"]),
+      reason: z.string().optional(),
+    });
+    const parsed = bodySchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json({ error: { message: "Invalid decision body" } }, 400);
+    }
+    const updated = await c.get("repo").decideApproval({
+      tenantId: auth.tenantId,
+      approvalId: c.req.param("id"),
+      decision: parsed.data.decision,
+      decidedBy: auth.keyId,
+      reason: parsed.data.reason,
+    });
+    if (!updated) {
+      return c.json({ error: { message: "Approval not found" } }, 404);
+    }
+    return c.json({ data: updated });
+  });
   return router;
 }
