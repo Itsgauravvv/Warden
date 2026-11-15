@@ -4,6 +4,7 @@ import { ThemeProvider } from "next-themes";
 import { BRAND } from "@warden/brand";
 import { TopNav } from "@/components/ui/TopNav";
 import { WallHeightGauge } from "@/components/ui/GatehouseKit";
+import { SculkAtmosphere } from "@/components/ui/SculkAtmosphere";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -41,13 +42,17 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} ${silkscreen.variable}`}
     >
-      <body className="pb-12 antialiased selection:bg-[#29dfeb] selection:text-[#061c24]">
+      <body
+        suppressHydrationWarning
+        className="pb-12 antialiased selection:bg-[#29dfeb] selection:text-[#061c24]"
+      >
         <ThemeProvider
           attribute="data-theme"
           defaultTheme="dark"
           themes={["light", "dark", "high-contrast"]}
           disableTransitionOnChange
         >
+          <SculkAtmosphere />
           <TopNav />
           <main>{children}</main>
           <WallHeightGauge />
