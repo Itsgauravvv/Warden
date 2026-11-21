@@ -23,6 +23,14 @@ export class TenantRepository {
       createdAt: now,
     });
   }
+  async getTenantById(tenantId: string) {
+    const rows = await this.db
+      .select()
+      .from(schema.tenants)
+      .where(eq(schema.tenants.id, tenantId))
+      .limit(1);
+    return rows[0] ?? null;
+  }
 
   async createApiKey(input: {
     id: string;

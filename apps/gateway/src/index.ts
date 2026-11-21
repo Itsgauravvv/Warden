@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createAdminRedTeamRoutes } from "./routes/admin-redteam.js";
 import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
 import { BRAND } from "@warden/brand";
@@ -188,6 +189,7 @@ export function createGatewayApp(
 
   app.route("/admin/v1/policies", createAdminPolicyRoutes(repo));
   app.route("/admin/v1", createAdminAuditRoutes(repo));
+  app.route("/admin/v1/redteam", createAdminRedTeamRoutes(repo, fetchImpl));
 
   return app;
 }
