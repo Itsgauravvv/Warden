@@ -1,5 +1,5 @@
 "use client";
-
+import { ExtrudedTitle } from "@/components/canvas/title/ExtrudedTitle";
 import React, { useState } from "react";
 import Link from "next/link";
 import { BRAND } from "@warden/brand";
@@ -50,6 +50,7 @@ export default function HomePage() {
       <AttackSignatureMarquee />
 
       <div className="max-w-7xl mx-auto px-4 space-y-16">
+        <ExtrudedTitle />
         {/* HERO SECTION */}
         <section className="gate-card p-6 sm:p-10 md:p-12 relative overflow-hidden bg-gradient-to-br from-[#061c24] via-[#09222c] to-[#0d0b14] text-[#f3ecdc]">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-8">
