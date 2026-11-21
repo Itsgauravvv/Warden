@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { BRAND } from "@warden/brand";
 import {
   checkCanaryLeak,
-  evaluateInputPipeline,
   generateCanaryToken,
   injectCanaryIntoSystemPrompt,
   restoreRedactedValues,
@@ -13,6 +12,7 @@ import type { RateLimitEngine } from "../durable-objects/rate-limiter.js";
 import type { SemanticCache } from "../cache/semantic-cache.js";
 import { sha256Hex } from "../auth/api-key.js";
 import { createScannedSseStream } from "../streaming/sse-scanner.js";
+import { runFullDetectionCascade, type JudgeBudgetTracker } from "../genai/judge.js";
 import {
   analyzeUntrustedToolResults,
   evaluateToolCallsFirewall,
@@ -31,6 +31,7 @@ export interface V1RouteDependencies {
   customFetch?: typeof fetch;
   rateLimiter: RateLimitEngine;
   semanticCache: SemanticCache;
+  judgeBudget?: JudgeBudgetTracker;
 }
 
 function estimateCostUsd(promptTokens: number, completionTokens: number): number {
@@ -144,14 +145,26 @@ export function createV1Routes(deps: V1RouteDependencies) {
     const projectHeader = c.req.header(`${BRAND.headerPrefix}-Project-Id`) ?? auth.projectId;
     const policy = await repo.resolveEffectivePolicy(auth.tenantId, projectHeader);
 
-    // 2. Analyze untrusted tool_result messages for taint, and evaluate non-tool messages
+    // 2. Analyze untrusted tool_result messages for taint, and run full 4-stage cascade
     const taintContext = analyzeUntrustedToolResults(parsedReq.data.messages, policy);
     const nonToolMessagesText = parsedReq.data.messages
       .filter((m) => m.role !== "tool")
       .map((m) => m.content ?? "")
       .join("\n");
 
-    const evaluation = evaluateInputPipeline(nonToolMessagesText, policy);
+    const judgeKeyCandidate =
+      c.req.header(`${BRAND.headerPrefix}-Provider-Key`) ??
+      (await repo.getDecryptedProviderCredential(auth.tenantId, "gemini"))?.apiKey ??
+      null;
+
+    const evaluation = await runFullDetectionCascade({
+      tenantId: auth.tenantId,
+      rawText: nonToolMessagesText,
+      policy,
+      judgeApiKey: judgeKeyCandidate,
+      budgetTracker: deps.judgeBudget,
+      fetchImpl: deps.customFetch,
+    });
 
     if (evaluation.finalAction === "block") {
       await repo.insertRequest(auth.tenantId, {
@@ -338,7 +351,6 @@ export function createV1Routes(deps: V1RouteDependencies) {
 
     // Inspect Agent Tool Calls through Firewall if present
     if (policy.toolFirewall.enabled && incomingToolCalls.length > 0) {
-      // Save request row first so toolCalls foreign key is satisfied
       await repo.insertRequest(auth.tenantId, {
         id: reqId,
         sessionId,

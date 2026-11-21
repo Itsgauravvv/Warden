@@ -1,15 +1,16 @@
 import { Hono } from "hono";
-import { runEvaluationSuite } from "@warden/eval";
-import { createAdminAuditRoutes } from "./routes/admin-audit.js";
 import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
 import { BRAND } from "@warden/brand";
+import { runEvaluationSuite } from "@warden/eval";
 import type { TenantRepository } from "./db/repository.js";
 import type { ApiKeyScope } from "./auth/api-key.js";
 import { createV1Routes } from "./routes/v1.js";
 import { createAdminPolicyRoutes } from "./routes/admin-policies.js";
+import { createAdminAuditRoutes } from "./routes/admin-audit.js";
 import { RateLimitEngine, RateLimiterDO } from "./durable-objects/rate-limiter.js";
 import { SemanticCache } from "./cache/semantic-cache.js";
+import { JudgeBudgetTracker, buildGroundedIncidentExplanation } from "./genai/judge.js";
 
 export { RateLimiterDO };
 
@@ -32,6 +33,7 @@ export interface GatewayAppOptions {
   customFetch?: typeof fetch;
   rateLimiter?: RateLimitEngine;
   semanticCache?: SemanticCache;
+  judgeBudget?: JudgeBudgetTracker;
 }
 
 export function createGatewayApp(
@@ -46,6 +48,7 @@ export function createGatewayApp(
   const fetchImpl = isOptions ? repoOrOptions.customFetch : customFetch;
   const rateLimiter = (isOptions && repoOrOptions.rateLimiter) || new RateLimitEngine();
   const semanticCache = (isOptions && repoOrOptions.semanticCache) || new SemanticCache();
+  const judgeBudget = (isOptions && repoOrOptions.judgeBudget) || new JudgeBudgetTracker();
 
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -72,6 +75,7 @@ export function createGatewayApp(
     const isReady = Boolean(c.get("repo"));
     return c.json({ ready: isReady }, isReady ? 200 : 503);
   });
+
   // Public evaluation benchmark endpoint for the /eval transparency page
   app.get("/eval/summary", (c) => {
     const suite = runEvaluationSuite();
@@ -93,7 +97,10 @@ export function createGatewayApp(
   });
 
   // Mount OpenAI-compatible /v1 proxy routes (defaults to Gemini)
-  app.route("/v1", createV1Routes({ repo, customFetch: fetchImpl, rateLimiter, semanticCache }));
+  app.route(
+    "/v1",
+    createV1Routes({ repo, customFetch: fetchImpl, rateLimiter, semanticCache, judgeBudget })
+  );
 
   // Tenant API Key Auth Middleware for /admin/v1/*
   app.use("/admin/v1/*", async (c, next) => {
@@ -128,6 +135,27 @@ export function createGatewayApp(
       return c.json({ error: { message: "Request not found", code: "not_found" } }, 404);
     }
     return c.json({ data: record });
+  });
+
+  // Grounded Incident Explainer citing ONLY stored findings for a tenant-scoped request
+  app.get("/admin/v1/requests/:id/explain", async (c) => {
+    const auth = c.get("auth");
+    if (!auth.scopes.includes("admin:read")) {
+      return c.json({ error: { message: "Insufficient scope: requires admin:read", code: "forbidden" } }, 403);
+    }
+    const requestId = c.req.param("id");
+    const activeRepo = c.get("repo");
+    const record = await activeRepo.getRequestById(auth.tenantId, requestId);
+    if (!record) {
+      return c.json({ error: { message: "Request not found", code: "not_found" } }, 404);
+    }
+    const storedFindings = await activeRepo.getFindingsByRequestId(auth.tenantId, requestId);
+    const explanation = buildGroundedIncidentExplanation(
+      record.id,
+      record.finalAction,
+      storedFindings
+    );
+    return c.json({ data: explanation });
   });
 
   // Configure tenant rate limits & budgets (Toll)

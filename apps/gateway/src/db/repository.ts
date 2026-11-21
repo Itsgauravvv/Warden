@@ -190,7 +190,13 @@ export class TenantRepository {
     return this.db
       .select()
       .from(schema.findings)
-      .where(and(eq(schema.findings.tenantId, tenantId), eq(schema.findings.requestId, requestId)));
+      .where(
+        and(
+          eq(schema.findings.tenantId, tenantId),
+          eq(schema.findings.requestId, requestId)
+        )
+      )
+      .orderBy(asc(schema.findings.createdAt));
   }
   /**
    * Creates a new policy or appends a new immutable version to an existing policy,
