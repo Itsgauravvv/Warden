@@ -120,7 +120,7 @@ export default function DocsPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
       {/* HEADER */}
-      <div className="gate-card p-6 sm:p-8 bg-[#061c24] border-[#29dfeb] text-[#f3ecdc] flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+      <div className="gate-card p-6 sm:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
           <WardenCrestSvg size={52} />
           <div>
@@ -154,7 +154,7 @@ export default function DocsPage() {
             onClick={() => setSection(t.id as typeof section)}
             className={`px-4 py-2 rounded-xl border-2 cursor-pointer ${
               section === t.id
-                ? "border-[#14121b] bg-[#29dfeb] text-[#041016] shadow-[0_4px_0_#14121b]"
+                ? "shadow-[0_4px_0_#14121b]"
                 : "border-[var(--border-ink)] bg-[var(--bg-elevated)]"
             }`}
           >
@@ -170,7 +170,7 @@ export default function DocsPage() {
 
           <div className="gate-card overflow-x-auto">
             <table className="w-full text-left font-mono text-xs">
-              <thead className="bg-[#061c24] text-[#7df9ff] border-b-2 border-[var(--border-ink)] uppercase">
+              <thead className="border-b-2 border-[var(--border-ink)] uppercase">
                 <tr>
                   <th className="p-3">Header</th>
                   <th className="p-3">Direction</th>
@@ -206,7 +206,7 @@ export default function DocsPage() {
       {section === "api" && (
         <div className="gate-card overflow-x-auto">
           <table className="w-full text-left font-mono text-xs">
-            <thead className="bg-[#061c24] text-[#7df9ff] border-b-2 border-[var(--border-ink)] uppercase">
+            <thead className="border-b-2 border-[var(--border-ink)] uppercase">
               <tr>
                 <th className="p-3">Method</th>
                 <th className="p-3">Path</th>

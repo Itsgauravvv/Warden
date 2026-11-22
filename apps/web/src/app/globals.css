@@ -2,6 +2,13 @@
 
 :root,
 [data-theme="light"] {
+  --bg-inset: #f0e8d7;
+  --bg-ok: #e8f8ee;
+  --text-ok: #14532d;
+  --bg-warn: #fef6df;
+  --text-warn: #78350f;
+  --bg-danger: #fdecec;
+  --text-danger: #7f1d1d;
   --bg-primary: #f4eee1;
   --bg-card: #fffdf8;
   --bg-elevated: #ece3d0;
@@ -34,6 +41,13 @@
 }
 
 [data-theme="dark"] {
+  --bg-inset: #030d12;
+  --bg-ok: #072118;
+  --text-ok: #d4ffea;
+  --bg-warn: #261c05;
+  --text-warn: #ffe082;
+  --bg-danger: #2a0910;
+  --text-danger: #ffd6d6;
   --bg-primary: #0d0b14;
   --bg-card: #141220;
   --bg-elevated: #081822;
@@ -64,6 +78,13 @@
 }
 
 [data-theme="high-contrast"] {
+  --bg-inset: #000000;
+  --bg-ok: #001f0d;
+  --text-ok: #00ff66;
+  --bg-warn: #1f1700;
+  --text-warn: #ffd000;
+  --bg-danger: #240000;
+  --text-danger: #ff6666;
   --bg-primary: #000000;
   --bg-card: #0a0a0a;
   --bg-elevated: #141414;

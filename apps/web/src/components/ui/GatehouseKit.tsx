@@ -169,24 +169,28 @@ export function WallHeightGauge() {
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 z-50 h-7 border-t-2 border-[var(--border-ink)] bg-[#061c24] text-[#f3ecdc] flex items-center px-4 font-mono text-[11px] justify-between"
+      className="fixed bottom-0 left-0 right-0 z-50 h-7 border-t-2 border-[var(--border-ink)] bg-[var(--bg-card)] text-[var(--ink)] flex items-center px-4 font-mono text-[11px] justify-between"
       role="region"
       aria-label="Rampart Wall Height Scroll Gauge"
     >
       <div className="flex items-center gap-2">
-        <span className="text-[#29dfeb] font-bold">■ RAMPART GAUGE</span>
-        <span className="hidden sm:inline text-[#9ba8b8]">| SCULK DEPTH SENSOR</span>
+        <span className="font-bold" style={{ color: "var(--sculk-cyan)" }}>
+          ■ RAMPART GAUGE
+        </span>
+        <span className="hidden sm:inline text-[var(--ink-muted)]">| SCULK DEPTH SENSOR</span>
       </div>
-      <div className="flex-1 mx-4 h-2.5 bg-[#030d12] border border-[#29dfeb]/50 rounded-sm overflow-hidden">
+      <div className="flex-1 mx-4 h-2.5 bg-[var(--bg-inset)] border border-[var(--border-subtle)] rounded-sm overflow-hidden">
         <div
           className="h-full transition-all duration-150"
           style={{
             width: `${progress}%`,
-            background: "linear-gradient(90deg, #2fd27a 0%, #29dfeb 60%, #7c5cff 100%)",
+            background: "linear-gradient(90deg, #22c55e 0%, #29dfeb 60%, #7c5cff 100%)",
           }}
         />
       </div>
-      <span className="font-bold text-[#7df9ff] tabular-nums">{progress}% WATCH</span>
+      <span className="font-bold tabular-nums" style={{ color: "var(--sculk-cyan)" }}>
+        {progress}% WATCH
+      </span>
     </div>
   );
 }

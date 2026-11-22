@@ -180,7 +180,7 @@ export default function DemoSiegePage() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-12">
       {/* ARENA 1: IMP'S SIEGE MODE */}
-      <section className="gate-card p-6 sm:p-8 bg-[#061c24] border-[#29dfeb] text-[#f3ecdc] space-y-6">
+      <section className="gate-card p-6 sm:p-8 space-y-6">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 border-b border-[#29dfeb]/40 pb-6">
           <div className="flex items-center gap-4">
             <div className="p-2 rounded-2xl border-2 border-[#ff4d4d] bg-[#2a0910]">
@@ -208,7 +208,7 @@ export default function DemoSiegePage() {
               className={`px-3.5 py-2 rounded-xl border-2 font-mono text-xs font-bold uppercase cursor-pointer ${
                 posture === "weak"
                   ? "border-[#ff4d4d] bg-[#ff4d4d] text-white"
-                  : "border-[#0b4f60] bg-[#041016] text-[#9ba8b8]"
+                  : "border-[#0b4f60] bg-[var(--bg-panel)] text-[var(--ink-muted)]"
               }`}
             >
               Weak Policy
@@ -363,7 +363,7 @@ export default function DemoSiegePage() {
         {/* Side-by-Side Comparison */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Left: Unprotected Agent */}
-          <div className="p-5 rounded-2xl border-2 border-[#ff4d4d] bg-[#2a0910] text-[#ffd6d6] space-y-4">
+          <div className="p-5 rounded-2xl border-2 border-[#ff4d4d] bg-[var(--bg-danger)] text-[var(--text-danger)] border-[var(--signal-block)] space-y-4">
             <div className="flex items-center justify-between font-mono text-xs font-bold">
               <span>✗ UNPROTECTED AGENT (DIRECT TO LLM)</span>
               <span className="px-2 py-0.5 rounded bg-[#ff4d4d] text-white">NO GATEWAY</span>
@@ -391,7 +391,7 @@ export default function DemoSiegePage() {
           </div>
 
           {/* Right: Warden-Protected Agent */}
-          <div className="p-5 rounded-2xl border-2 border-[#29dfeb] bg-[#041016] text-[#f3ecdc] space-y-4">
+          <div className="p-5 rounded-2xl border-2 border-[#29dfeb] bg-[var(--bg-ok)] text-[var(--text-ok)] border-[var(--signal-allow)] space-y-4">
             <div className="flex items-center justify-between font-mono text-xs font-bold">
               <span className="flex items-center gap-2 text-[#29dfeb]">
                 <WardenCrestSvg

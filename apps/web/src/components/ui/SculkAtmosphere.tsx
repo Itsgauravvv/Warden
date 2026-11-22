@@ -8,7 +8,10 @@ interface CursorParticle {
   x: number;
   y: number;
   color: string;
+  createdAt: number;
 }
+
+const PARTICLE_TTL_MS = 380;
 
 const FLOATING_ELEMENTS = [
   { id: 1, left: "4%", glyph: "■", size: 10, delay: "0s", duration: "16s", color: "#29dfeb" },
@@ -37,6 +40,7 @@ const ATTACK_SIGNATURES = [
 export function SculkAtmosphere() {
   const { reduceMotion } = useUiPreferences();
   const [trail, setTrail] = useState<CursorParticle[]>([]);
+  const [nowMs, setNowMs] = useState<number>(0);
 
   useEffect(() => {
     if (reduceMotion) {
@@ -49,17 +53,35 @@ export function SculkAtmosphere() {
     const colors = ["#29dfeb", "#0e6b7d", "#2fd27a", "#7c5cff"];
 
     const onMouseMove = (e: MouseEvent) => {
-      const now = performance.now();
-      if (now - lastSpawn < 45) return;
+      const now = Date.now();
+      if (now - lastSpawn < 40) return;
       lastSpawn = now;
       const id = ++counter;
       const color = colors[id % colors.length] ?? "#29dfeb";
 
-      setTrail((prev) => [...prev.slice(-10), { id, x: e.clientX, y: e.clientY, color }]);
+      setNowMs(now);
+      setTrail((prev) => [
+        ...prev.filter((p) => now - p.createdAt < PARTICLE_TTL_MS).slice(-9),
+        { id, x: e.clientX, y: e.clientY, color, createdAt: now },
+      ]);
     };
 
+    // Prune expired particles every 50ms so the trail vanishes completely once the cursor stops
+    const cleanupTimer = setInterval(() => {
+      const now = Date.now();
+      setNowMs(now);
+      setTrail((prev) => {
+        if (prev.length === 0) return prev;
+        const alive = prev.filter((p) => now - p.createdAt < PARTICLE_TTL_MS);
+        return alive.length === prev.length ? prev : alive;
+      });
+    }, 50);
+
     window.addEventListener("mousemove", onMouseMove, { passive: true });
-    return () => window.removeEventListener("mousemove", onMouseMove);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      clearInterval(cleanupTimer);
+    };
   }, [reduceMotion]);
 
   if (reduceMotion) return null;
@@ -94,28 +116,29 @@ export function SculkAtmosphere() {
         </span>
       ))}
 
-      {/* Pixel Cursor Trail */}
-      {trail.map((p, idx) => (
-        <span
-          key={p.id}
-          className="fixed w-2 h-2 transition-opacity duration-300"
-          style={{
-            left: p.x + 10,
-            top: p.y + 10,
-            backgroundColor: p.color,
-            opacity: (idx + 1) / trail.length,
-            boxShadow: `0 0 6px ${p.color}`,
-          }}
-        />
-      ))}
+      {/* Auto-Vanishing Pixel Cursor Trail */}
+      {trail.map((p) => {
+        const age = Math.max(0, nowMs - p.createdAt);
+        const life = Math.max(0, 1 - age / PARTICLE_TTL_MS);
+        return (
+          <span
+            key={p.id}
+            className="fixed w-2 h-2 pointer-events-none"
+            style={{
+              left: p.x + 10,
+              top: p.y + 10,
+              backgroundColor: p.color,
+              opacity: Number(life.toFixed(2)),
+              transform: `scale(${(0.4 + life * 0.6).toFixed(2)})`,
+              boxShadow: `0 0 6px ${p.color}`,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
 
-/**
- * Continuous Right-to-Left Auto-Scrolling Marquee when Motion is Live;
- * Clean Static Wrapped Strip when Reduce Motion is enabled.
- */
 export function AttackSignatureMarquee() {
   const { reduceMotion } = useUiPreferences();
 

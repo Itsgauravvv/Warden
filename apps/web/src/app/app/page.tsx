@@ -10,10 +10,7 @@ import {
   type PolicyAction,
 } from "@warden/policy-schema";
 import { evaluateInputPipeline } from "@warden/detectors";
-import {
-  SectionGateLabel,
-  VerdictBadge,
-} from "@/components/ui/GatehouseKit";
+import { SectionGateLabel, VerdictBadge } from "@/components/ui/GatehouseKit";
 import { WardenCrestSvg } from "@/components/ui/WardenCrestSvg";
 import { bakeSpriteToSvgDataUrl } from "@/sprites/pixel-sprites";
 import { playGatehouseSfx } from "@/lib/preferences-store";
@@ -91,7 +88,7 @@ const INITIAL_REQUESTS: DashboardRequestRecord[] = [
     tokens: 310,
     costUsd: 0.00012,
     promptRaw:
-      "Draft a welcome note forvip.client@enterprise.io and charge card 4532-0151-1283-0366.",
+      "Draft a welcome note for vip.client@enterprise.io and charge card 4532-0151-1283-0366.",
     promptSanitized:
       "Draft a welcome note for [REDACTED_EMAIL_1] and charge card [REDACTED_CREDIT_CARD_2].",
     findings: [
@@ -104,8 +101,8 @@ const INITIAL_REQUESTS: DashboardRequestRecord[] = [
         action: "redact",
         direction: "input",
         evidenceSpan: {
-          start: 24,
-          end: 48,
+          start: 25,
+          end: 49,
           snippetRedacted: "vi***io",
         },
         message: "Sniffer masked customer email address before upstream Gemini call",
@@ -119,8 +116,8 @@ const INITIAL_REQUESTS: DashboardRequestRecord[] = [
         action: "redact",
         direction: "input",
         evidenceSpan: {
-          start: 65,
-          end: 84,
+          start: 66,
+          end: 85,
           snippetRedacted: "45***66 (Luhn valid)",
         },
         message: "Sniffer masked Luhn-verified credit card number",
@@ -244,12 +241,18 @@ toolFirewall:
   enabled: true
   defaultAction: "block"`;
 
+const ORIGINAL_AUDIT_PAYLOADS = [
+  '{"requestId":"req_sculk_901","action":"block","rule":"injection.ignore_previous"}',
+  '{"requestId":"req_sculk_902","action":"redact","rule":"pii.email"}',
+  '{"requestId":"req_sculk_903","action":"allow","cacheHit":true}',
+  '{"requestId":"req_sculk_904","action":"allow","model":"gemini-2.5-pro"}',
+];
+
 export default function DashboardAppPage() {
   const [activeTab, setActiveTab] = useState<
     "traffic" | "replay" | "policylab" | "approvals" | "audit"
   >("traffic");
 
-  // 1. Traffic & Incident Explainer state
   const [requests, setRequests] = useState<DashboardRequestRecord[]>(INITIAL_REQUESTS);
   const [filterAction, setFilterAction] = useState<string>("ALL");
   const [selectedReqId, setSelectedReqId] = useState<string>(INITIAL_REQUESTS[0]!.id);
@@ -257,18 +260,14 @@ export default function DashboardAppPage() {
     INITIAL_REQUESTS[0]!.findings[0]?.id ?? null
   );
   const [liveProbePrompt, setLiveProbePrompt] = useState("");
-
-  // 2. Session Replay state
   const [replayStep, setReplayStep] = useState<number>(4);
 
-  // 3. Policy Lab & Quill Copilot state
   const [quillInstruction, setQuillInstruction] = useState(
     "Block all PII instead of redacting, and enable the semantic cache at 0.92 threshold"
   );
   const [yamlDraft, setYamlDraft] = useState(DEFAULT_YAML);
   const [policyError, setPolicyError] = useState<string | null>(null);
 
-  // 4. Approvals Queue state
   const [approvals, setApprovals] = useState([
     {
       id: "apr_881",
@@ -288,23 +287,12 @@ export default function DashboardAppPage() {
     },
   ]);
 
-  // 5. Tamper-Evident Audit Chain state ("Ledger")
-  const [auditPayloads, setAuditPayloads] = useState([
-    '{"requestId":"req_sculk_901","action":"block","rule":"injection.ignore_previous"}',
-    '{"requestId":"req_sculk_902","action":"redact","rule":"pii.email"}',
-    '{"requestId":"req_sculk_903","action":"allow","cacheHit":true}',
-    '{"requestId":"req_sculk_904","action":"allow","model":"gemini-2.5-pro"}',
-  ]);
+  const [auditPayloads, setAuditPayloads] = useState(ORIGINAL_AUDIT_PAYLOADS);
 
   const originalCanonicalHashes = useMemo(() => {
     const hashes: string[] = [];
     let prev = "0".repeat(64);
-    for (const p of [
-      '{"requestId":"req_sculk_901","action":"block","rule":"injection.ignore_previous"}',
-      '{"requestId":"req_sculk_902","action":"redact","rule":"pii.email"}',
-      '{"requestId":"req_sculk_903","action":"allow","cacheHit":true}',
-      '{"requestId":"req_sculk_904","action":"allow","model":"gemini-2.5-pro"}',
-    ]) {
+    for (const p of ORIGINAL_AUDIT_PAYLOADS) {
       const h = quickHash(`${prev}||${p}`);
       hashes.push(h);
       prev = h;
@@ -315,7 +303,11 @@ export default function DashboardAppPage() {
   const currentChainVerification = useMemo(() => {
     let prev = "0".repeat(64);
     let firstBrokenSeq: number | null = null;
-    const blocks: (AuditBlockItem & { currentHash: string; sealedHash: string; corrupted: boolean })[] = [];
+    const blocks: (AuditBlockItem & {
+      currentHash: string;
+      sealedHash: string;
+      corrupted: boolean;
+    })[] = [];
 
     auditPayloads.forEach((payload, idx) => {
       const seq = idx + 1;
@@ -337,11 +329,7 @@ export default function DashboardAppPage() {
       prev = currentHash;
     });
 
-    return {
-      valid: firstBrokenSeq === null,
-      firstBrokenSeq,
-      blocks,
-    };
+    return { valid: firstBrokenSeq === null, firstBrokenSeq, blocks };
   }, [auditPayloads, originalCanonicalHashes]);
 
   const filteredRequests = useMemo(() => {
@@ -390,12 +378,11 @@ export default function DashboardAppPage() {
     setLiveProbePrompt("");
   };
 
-  // Quill Natural-Language-to-YAML Policy Copilot
   const handleAskQuill = () => {
     const lower = quillInstruction.toLowerCase();
     const blockPii = lower.includes("block") && lower.includes("pii");
     const enableCache = lower.includes("cache");
-    const GENERATED = `version: "1.0"
+    const generated = `version: "1.0"
 name: "quill-generated-policy"
 mode: "enforce"
 failMode: "closed"
@@ -415,7 +402,7 @@ semanticCache:
   enabled: ${enableCache ? "true" : "false"}
   similarityThreshold: 0.92
   ttlSeconds: 3600`;
-    setYamlDraft(GENERATED);
+    setYamlDraft(generated);
     setPolicyError(null);
     playGatehouseSfx("sculk_ping");
   };
@@ -423,7 +410,6 @@ semanticCache:
   const policyDryRunAndDiff = useMemo(() => {
     try {
       const { policy } = parsePolicyYamlOrJson(yamlDraft);
-      setPolicyError(null);
       const changes = diffPolicyDocuments(DEFAULT_POLICY, policy);
       let newlyBlocked = 0;
       const deltas = requests.map((r) => {
@@ -451,9 +437,9 @@ semanticCache:
   }, [yamlDraft, requests]);
 
   useEffect(() => {
-    if (!policyDryRunAndDiff.valid && policyDryRunAndDiff.error) {
-      setPolicyError(policyDryRunAndDiff.error);
-    }
+    setPolicyError(
+      !policyDryRunAndDiff.valid && policyDryRunAndDiff.error ? policyDryRunAndDiff.error : null
+    );
   }, [policyDryRunAndDiff]);
 
   const highlightedFinding = selectedRequest.findings.find(
@@ -463,16 +449,24 @@ semanticCache:
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
       {/* Top Dashboard Header */}
-      <div className="gate-card p-6 bg-[#061c24] border-[#29dfeb] text-[#f3ecdc] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div
+        className="gate-card p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+        style={{
+          backgroundImage:
+            "linear-gradient(135deg, var(--bg-hero-from) 0%, var(--bg-hero-to) 100%)",
+        }}
+      >
         <div className="flex items-center gap-4">
-          <WardenCrestSvg
-            size={56}
-            alertState={
-              !currentChainVerification.valid || selectedRequest.action === "block"
-                ? "sonic_boom"
-                : "calm"
-            }
-          />
+          <div className="p-2 rounded-2xl border-2 border-[#29dfeb] bg-[#061c24] shrink-0">
+            <WardenCrestSvg
+              size={48}
+              alertState={
+                !currentChainVerification.valid || selectedRequest.action === "block"
+                  ? "sonic_boom"
+                  : "calm"
+              }
+            />
+          </div>
           <div>
             <SectionGateLabel gateNumber="APP" title="COMMAND & TELEMETRY WATCHTOWER" />
             <h1 className="text-2xl sm:text-3xl font-bold mt-1">
@@ -487,7 +481,10 @@ semanticCache:
             { id: "traffic", label: "1. Live Traffic & Explainer" },
             { id: "replay", label: "2. Session Taint Replay" },
             { id: "policylab", label: "3. Policy Lab (Quill)" },
-            { id: "approvals", label: `4. Approvals (${approvals.filter((a) => a.status === "pending").length})` },
+            {
+              id: "approvals",
+              label: `4. Approvals (${approvals.filter((a) => a.status === "pending").length})`,
+            },
             { id: "audit", label: "5. Tamper Audit Chain" },
           ].map((tab) => (
             <button
@@ -499,8 +496,8 @@ semanticCache:
               }}
               className={`px-3.5 py-2 rounded-xl border-2 cursor-pointer transition-all ${
                 activeTab === tab.id
-                  ? "border-[#14121b] bg-[#29dfeb] text-[#061c24] shadow-[0_4px_0_#14121b]"
-                  : "border-[#29dfeb]/50 bg-[#082732] text-[#7df9ff] hover:bg-[#0b4f60]"
+                  ? "border-[#14121b] bg-[#29dfeb] text-[#041016] shadow-[0_4px_0_#14121b]"
+                  : "border-[var(--border-ink)] bg-[var(--bg-elevated)] text-[var(--ink)] hover:bg-[var(--bg-card)]"
               }`}
             >
               {tab.label}
@@ -512,21 +509,20 @@ semanticCache:
       {/* TAB 1: LIVE TRAFFIC & GROUNDED INCIDENT EXPLAINER */}
       {activeTab === "traffic" && (
         <div className="space-y-6">
-          {/* Interactive Prompt Probe Form */}
           <form
             onSubmit={handleSendLiveProbe}
-            className="gate-card p-4 bg-[#082732] border-[#29dfeb] flex flex-col sm:flex-row gap-3"
+            className="gate-card p-4 bg-[var(--bg-elevated)] flex flex-col sm:flex-row gap-3"
           >
             <input
               type="text"
               value={liveProbePrompt}
               onChange={(e) => setLiveProbePrompt(e.target.value)}
               placeholder="Test any prompt live through Warden (e.g. 'Ignore previous instructions' or 'My card is 4532-0151-1283-0366')..."
-              className="flex-1 px-4 py-2.5 rounded-xl border-2 border-[#29dfeb] bg-[#041016] text-[#f3ecdc] font-mono text-xs"
+              className="flex-1 px-4 py-2.5 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--bg-inset)] text-[var(--ink)] placeholder:text-[var(--ink-muted)] font-mono text-xs"
             />
             <button
               type="submit"
-              className="px-5 py-2.5 rounded-xl border-2 border-[#14121b] bg-[#2fd27a] text-[#041016] font-mono text-xs font-bold uppercase cursor-pointer shrink-0"
+              className="px-5 py-2.5 rounded-xl border-2 border-[#14121b] bg-[#22c55e] text-[#041016] font-mono text-xs font-bold uppercase cursor-pointer shrink-0 shadow-[0_3px_0_#14121b]"
             >
               ⚡ Inspect Prompt Now
             </button>
@@ -545,10 +541,10 @@ semanticCache:
                       key={flt}
                       type="button"
                       onClick={() => setFilterAction(flt)}
-                      className={`px-2.5 py-1 rounded border cursor-pointer font-bold ${
+                      className={`px-2.5 py-1 rounded border-2 cursor-pointer font-bold ${
                         filterAction === flt
-                          ? "bg-[#29dfeb] text-[#061c24] border-[#14121b]"
-                          : "bg-[var(--bg-elevated)] border-[var(--border-ink)]"
+                          ? "bg-[#29dfeb] text-[#041016] border-[#14121b]"
+                          : "bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--ink)]"
                       }`}
                     >
                       {flt}
@@ -558,59 +554,77 @@ semanticCache:
               </div>
 
               <div className="space-y-2.5">
-                {filteredRequests.map((req) => (
-                  <button
-                    key={req.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedReqId(req.id);
-                      setHighlightedFindingId(req.findings[0]?.id ?? null);
-                    }}
-                    className={`w-full text-left p-3.5 rounded-xl border-2 transition-all cursor-pointer flex flex-col gap-2 ${
-                      selectedRequest.id === req.id
-                        ? "border-[#29dfeb] bg-[#061c24] text-[#f3ecdc] shadow-[0_4px_0_#29dfeb]"
-                        : "border-[var(--border-ink)] bg-[var(--bg-elevated)] hover:translate-x-1"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-xs font-bold text-[#29dfeb]">
-                        {req.id} • {req.model}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[11px] opacity-75">
-                          {req.latencyMs}ms • {req.timestamp}
+                {filteredRequests.map((req) => {
+                  const isSelected = selectedRequest.id === req.id;
+                  return (
+                    <button
+                      key={req.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedReqId(req.id);
+                        setHighlightedFindingId(req.findings[0]?.id ?? null);
+                      }}
+                      className="w-full text-left p-3.5 rounded-xl border-2 transition-all cursor-pointer flex flex-col gap-2"
+                      style={{
+                        borderColor: isSelected ? "var(--sculk-cyan)" : "var(--border-subtle)",
+                        backgroundColor: isSelected ? "var(--bg-elevated)" : "var(--bg-panel)",
+                        boxShadow: isSelected ? "0 4px 0 var(--shadow-ink)" : "none",
+                      }}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span
+                          className="font-mono text-xs font-bold"
+                          style={{ color: "var(--sculk-cyan)" }}
+                        >
+                          {req.id} • {req.model}
                         </span>
-                        <VerdictBadge action={req.action} cached={req.cached} />
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[11px] text-[var(--ink-muted)]">
+                            {req.latencyMs}ms • {req.timestamp}
+                          </span>
+                          <VerdictBadge action={req.action} cached={req.cached} />
+                        </div>
                       </div>
-                    </div>
-                    <p className="font-mono text-xs truncate">{req.promptRaw}</p>
-                  </button>
-                ))}
+                      <p className="font-mono text-xs truncate">{req.promptRaw}</p>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Right Column: Grounded Incident Explainer with Clickable Finding Citations */}
-            <div className="lg:col-span-5 gate-card p-5 bg-[#061c24] border-[#29dfeb] text-[#f3ecdc] space-y-4">
-              <div className="flex items-center justify-between border-b border-[#29dfeb]/40 pb-3">
+            {/* Right Column: Grounded Incident Explainer */}
+            <div className="lg:col-span-5 gate-card p-5 space-y-4">
+              <div className="flex items-center justify-between border-b-2 border-[var(--border-subtle)] pb-3">
                 <div>
-                  <span className="font-mono text-[11px] uppercase text-[#29dfeb] font-bold">
+                  <span
+                    className="font-mono text-[11px] uppercase font-bold"
+                    style={{ color: "var(--sculk-cyan)" }}
+                  >
                     ■ GROUNDED INCIDENT EXPLAINER
                   </span>
                   <h3 className="text-lg font-bold">{selectedRequest.id}</h3>
                 </div>
-                <VerdictBadge
-                  action={selectedRequest.action}
-                  cached={selectedRequest.cached}
-                />
+                <VerdictBadge action={selectedRequest.action} cached={selectedRequest.cached} />
               </div>
 
-              {/* Grounded Plain-English Explanation with Clickable Citation Pills */}
-              <div className="p-3.5 rounded-xl border-2 border-[#29dfeb]/60 bg-[#041016] space-y-2">
-                <div className="font-mono text-[11px] font-bold text-[#7df9ff] uppercase">
+              <div
+                className="p-3.5 rounded-xl border-2 space-y-2"
+                style={{
+                  borderColor: "var(--border-subtle)",
+                  backgroundColor: "var(--bg-panel)",
+                }}
+              >
+                <div
+                  className="font-mono text-[11px] font-bold uppercase"
+                  style={{ color: "var(--sculk-cyan)" }}
+                >
                   AI Security Analyst Summary (Strictly Grounded in Findings):
                 </div>
                 {selectedRequest.findings.length === 0 ? (
-                  <p className="text-xs font-mono text-[#2fd27a] leading-relaxed">
+                  <p
+                    className="text-xs font-mono leading-relaxed font-semibold"
+                    style={{ color: "var(--text-ok)" }}
+                  >
                     No policy violations detected. Scroll passed all Sculk normalizer, secret,
                     PII, and injection checks with 0 findings.
                   </p>
@@ -618,7 +632,7 @@ semanticCache:
                   <div className="space-y-2 text-xs leading-relaxed">
                     <p>
                       {BRAND.name} enforced action{" "}
-                      <strong className="uppercase text-[#ffb300]">
+                      <strong className="uppercase" style={{ color: "var(--signal-redact)" }}>
                         {selectedRequest.action}
                       </strong>{" "}
                       based on {selectedRequest.findings.length} recorded finding(s). Click any
@@ -630,11 +644,20 @@ semanticCache:
                           key={f.id}
                           type="button"
                           onClick={() => setHighlightedFindingId(f.id)}
-                          className={`px-2.5 py-1 rounded font-mono text-xs font-bold border cursor-pointer ${
+                          className="px-2.5 py-1 rounded font-mono text-xs font-bold border-2 cursor-pointer"
+                          style={
                             highlightedFindingId === f.id
-                              ? "bg-[#ff4d4d] text-white border-white"
-                              : "bg-[#082732] text-[#29dfeb] border-[#29dfeb]"
-                          }`}
+                              ? {
+                                  backgroundColor: "var(--signal-block)",
+                                  color: "#ffffff",
+                                  borderColor: "var(--border-ink)",
+                                }
+                              : {
+                                  backgroundColor: "var(--badge-bg)",
+                                  color: "var(--badge-text)",
+                                  borderColor: "var(--sculk-cyan)",
+                                }
+                          }
                         >
                           [{f.id}] {f.ruleId}
                         </button>
@@ -644,30 +667,24 @@ semanticCache:
                 )}
               </div>
 
-              {/* Evidence Span Inspector */}
               <div className="space-y-2">
-                <div className="font-mono text-xs font-bold uppercase text-[#9ba8b8]">
+                <div className="font-mono text-xs font-bold uppercase text-[var(--ink-muted)]">
                   Raw Scroll vs. Evidence Span Highlight:
                 </div>
-                <div className="p-3 rounded-xl bg-[#030d12] border border-[#0b4f60] font-mono text-xs leading-relaxed break-words">
+                <div className="p-3 rounded-xl bg-[var(--bg-inset)] border-2 border-[var(--border-subtle)] font-mono text-xs leading-relaxed break-words">
                   {highlightedFinding ? (
                     <>
                       <span>
-                        {selectedRequest.promptRaw.slice(
-                          0,
-                          highlightedFinding.evidenceSpan.start
-                        )}
+                        {selectedRequest.promptRaw.slice(0, highlightedFinding.evidenceSpan.start)}
                       </span>
-                      <mark className="bg-[#ff4d4d] text-white px-1 py-0.5 rounded font-bold underline">
+                      <mark className="bg-[#ef4444] text-white px-1 py-0.5 rounded font-bold underline">
                         {selectedRequest.promptRaw.slice(
                           highlightedFinding.evidenceSpan.start,
                           highlightedFinding.evidenceSpan.end
                         )}
                       </mark>
                       <span>
-                        {selectedRequest.promptRaw.slice(
-                          highlightedFinding.evidenceSpan.end
-                        )}
+                        {selectedRequest.promptRaw.slice(highlightedFinding.evidenceSpan.end)}
                       </span>
                     </>
                   ) : (
@@ -676,12 +693,21 @@ semanticCache:
                 </div>
               </div>
 
-              {/* Sanitized / Redacted Payload Sent Upstream */}
               <div className="space-y-1.5">
-                <div className="font-mono text-xs font-bold uppercase text-[#2fd27a]">
+                <div
+                  className="font-mono text-xs font-bold uppercase"
+                  style={{ color: "var(--text-ok)" }}
+                >
                   Sanitized Scroll Sent to Gemini:
                 </div>
-                <pre className="p-3 rounded-xl bg-[#030d12] border border-[#2fd27a]/40 font-mono text-xs text-[#2fd27a] whitespace-pre-wrap">
+                <pre
+                  className="p-3 rounded-xl border-2 font-mono text-xs whitespace-pre-wrap"
+                  style={{
+                    backgroundColor: "var(--bg-ok)",
+                    color: "var(--text-ok)",
+                    borderColor: "var(--signal-allow)",
+                  }}
+                >
                   {selectedRequest.promptSanitized}
                 </pre>
               </div>
@@ -692,10 +718,13 @@ semanticCache:
 
       {/* TAB 2: SESSION REPLAY & TAINT-FLOW OVERLAY */}
       {activeTab === "replay" && (
-        <div className="gate-card p-6 bg-[#061c24] border-[#29dfeb] text-[#f3ecdc] space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#29dfeb]/40 pb-4">
+        <div className="gate-card p-6 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b-2 border-[var(--border-subtle)] pb-4">
             <div>
-              <span className="font-mono text-xs font-bold text-[#29dfeb] uppercase">
+              <span
+                className="font-mono text-xs font-bold uppercase"
+                style={{ color: "var(--sculk-cyan)" }}
+              >
                 ■ CONFUSED-DEPUTY TAINT GRAPH REPLAY
               </span>
               <h2 className="text-2xl font-bold">
@@ -713,7 +742,7 @@ semanticCache:
                 className="w-36 accent-[#29dfeb] cursor-pointer"
                 aria-label="Scrub session timeline steps"
               />
-              <span className="px-2.5 py-1 rounded bg-[#082732] border border-[#29dfeb] font-bold">
+              <span className="px-2.5 py-1 rounded bg-[var(--bg-elevated)] border-2 border-[var(--border-ink)] font-bold">
                 STEP {replayStep} / 4
               </span>
             </div>
@@ -723,28 +752,29 @@ semanticCache:
             {AGENT_SESSION_STEPS.slice(0, replayStep).map((s) => (
               <div
                 key={s.step}
-                className={`p-4 rounded-xl border-2 space-y-2 transition-all ${
-                  s.tainted
-                    ? "border-[#ff4d4d] bg-[#2a0910] text-[#ffd6d6] shadow-[0_0_20px_rgba(255,77,77,0.3)]"
-                    : "border-[#2fd27a] bg-[#072118] text-[#d4ffea]"
-                }`}
+                className="p-4 rounded-xl border-2 space-y-2 transition-all"
+                style={{
+                  borderColor: s.tainted ? "var(--signal-block)" : "var(--signal-allow)",
+                  backgroundColor: s.tainted ? "var(--bg-danger)" : "var(--bg-ok)",
+                  color: s.tainted ? "var(--text-danger)" : "var(--text-ok)",
+                }}
               >
                 <div className="flex items-center justify-between font-mono text-xs font-bold">
                   <span>STEP 0{s.step}</span>
                   <span
                     className={`px-2 py-0.5 rounded text-[10px] uppercase ${
-                      s.tainted ? "bg-[#ff4d4d] text-white" : "bg-[#2fd27a] text-[#041016]"
+                      s.tainted ? "bg-[#ef4444] text-white" : "bg-[#22c55e] text-[#041016]"
                     }`}
                   >
                     {s.tainted ? "☣ TAINTED" : "CLEAN"}
                   </span>
                 </div>
                 <h3 className="font-bold text-sm">{s.title}</h3>
-                <p className="font-mono text-xs bg-black/40 p-2.5 rounded border border-white/10 break-words">
+                <p className="font-mono text-xs bg-[var(--bg-card)] text-[var(--ink)] p-2.5 rounded border border-[var(--border-subtle)] break-words">
                   {s.payload}
                 </p>
                 {s.taintSource && (
-                  <div className="text-[11px] font-mono font-bold text-[#ffb300]">
+                  <div className="text-[11px] font-mono font-bold">
                     ⚡ TAINT FLOW: {s.taintSource}
                   </div>
                 )}
@@ -754,26 +784,29 @@ semanticCache:
         </div>
       )}
 
-      {/* TAB 3: POLICY LAB + QUILL COPILOT + HISTORICAL DRY-RUN */}
+      {/* TAB 3: POLICY LAB + QUILL COPILOT */}
       {activeTab === "policylab" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6 gate-card p-6 bg-[#061c24] border-[#29dfeb] text-[#f3ecdc] space-y-4">
+          <div className="lg:col-span-6 gate-card p-6 space-y-4">
             <div className="flex items-center gap-3">
               <img
                 src={bakeSpriteToSvgDataUrl("quill", 4)}
                 alt="Quill Fox Clerk"
-                className="w-12 h-12 rounded-xl border-2 border-[#ffb300] bg-[#041016] p-1"
+                className="w-12 h-12 rounded-xl border-2 border-[#f59e0b] bg-[#061c24] p-1"
               />
               <div>
-                <span className="font-mono text-xs font-bold uppercase text-[#ffb300]">
+                <span
+                  className="font-mono text-xs font-bold uppercase"
+                  style={{ color: "var(--sculk-cyan)" }}
+                >
                   ■ QUILL POLICY COPILOT (NATURAL LANGUAGE → YAML)
                 </span>
-                <h2 className="text-xl font-bold">Draft & Dry-Run Policy Scrolls</h2>
+                <h2 className="text-xl font-bold">Draft &amp; Dry-Run Policy Scrolls</h2>
               </div>
             </div>
 
             <div className="space-y-2">
-              <label className="block font-mono text-xs font-bold text-[#7df9ff]">
+              <label className="block font-mono text-xs font-bold text-[var(--ink-muted)]">
                 Tell Quill what rule to write:
               </label>
               <div className="flex gap-2">
@@ -781,12 +814,12 @@ semanticCache:
                   type="text"
                   value={quillInstruction}
                   onChange={(e) => setQuillInstruction(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-lg border-2 border-[#29dfeb] bg-[#041016] text-xs font-mono"
+                  className="flex-1 px-3 py-2 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--bg-inset)] text-[var(--ink)] text-xs font-mono"
                 />
                 <button
                   type="button"
                   onClick={handleAskQuill}
-                  className="px-4 py-2 rounded-lg border-2 border-[#14121b] bg-[#ffb300] text-[#14121b] font-mono text-xs font-bold uppercase cursor-pointer"
+                  className="px-4 py-2 rounded-lg border-2 border-[#14121b] bg-[#f59e0b] text-[#14121b] font-mono text-xs font-bold uppercase cursor-pointer"
                 >
                   ✎ Generate YAML
                 </button>
@@ -795,11 +828,14 @@ semanticCache:
 
             <div className="space-y-2">
               <div className="flex items-center justify-between font-mono text-xs">
-                <span className="font-bold text-[#29dfeb]">POLICY-AS-CODE (YAML):</span>
+                <span className="font-bold" style={{ color: "var(--sculk-cyan)" }}>
+                  POLICY-AS-CODE (YAML):
+                </span>
                 <button
                   type="button"
                   onClick={() => setYamlDraft(DEFAULT_YAML)}
-                  className="underline text-[#ffb300] cursor-pointer"
+                  className="underline font-bold cursor-pointer"
+                  style={{ color: "var(--signal-redact)" }}
                 >
                   ↺ Instant Rollback to v1 Default
                 </button>
@@ -808,10 +844,17 @@ semanticCache:
                 rows={14}
                 value={yamlDraft}
                 onChange={(e) => setYamlDraft(e.target.value)}
-                className="w-full p-3 rounded-xl border-2 border-[#29dfeb]/60 bg-[#030d12] text-[#7df9ff] font-mono text-xs leading-relaxed"
+                className="w-full p-3 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--bg-inset)] text-[var(--ink)] font-mono text-xs leading-relaxed"
               />
               {policyError && (
-                <div className="p-2.5 rounded bg-[#ff4d4d]/20 border border-[#ff4d4d] text-[#ffb3b3] font-mono text-xs">
+                <div
+                  className="p-2.5 rounded border-2 font-mono text-xs font-bold"
+                  style={{
+                    backgroundColor: "var(--bg-danger)",
+                    color: "var(--text-danger)",
+                    borderColor: "var(--signal-block)",
+                  }}
+                >
                   ✗ Schema Error: {policyError}
                 </div>
               )}
@@ -820,11 +863,14 @@ semanticCache:
 
           <div className="lg:col-span-6 gate-card p-6 space-y-5">
             <h3 className="text-xl font-bold font-mono uppercase">
-              ■ Live Structural Diff & Historical Dry-Run
+              ■ Live Structural Diff &amp; Historical Dry-Run
             </h3>
 
-            <div className="p-4 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--bg-elevated)] space-y-2">
-              <div className="font-mono text-xs font-bold uppercase text-[#29dfeb]">
+            <div className="p-4 rounded-xl border-2 border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+              <div
+                className="font-mono text-xs font-bold uppercase"
+                style={{ color: "var(--sculk-cyan)" }}
+              >
                 1. Structural Changes vs Active v1.0 Policy ({policyDryRunAndDiff.changes.length}):
               </div>
               {policyDryRunAndDiff.changes.length === 0 ? (
@@ -834,34 +880,48 @@ semanticCache:
               ) : (
                 <ul className="space-y-1.5 font-mono text-xs">
                   {policyDryRunAndDiff.changes.map((c, i) => (
-                    <li key={i} className="p-2 rounded bg-[#061c24] text-[#f3ecdc]">
-                      <strong className="text-[#29dfeb]">{c.path}:</strong>{" "}
-                      <span className="line-through text-[#ff4d4d]">{JSON.stringify(c.before)}</span>{" "}
-                      → <span className="text-[#2fd27a] font-bold">{JSON.stringify(c.after)}</span>
+                    <li
+                      key={i}
+                      className="p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-card)]"
+                    >
+                      <strong style={{ color: "var(--sculk-cyan)" }}>{c.path}:</strong>{" "}
+                      <span className="line-through" style={{ color: "var(--signal-block)" }}>
+                        {JSON.stringify(c.before)}
+                      </span>{" "}
+                      →{" "}
+                      <span className="font-bold" style={{ color: "var(--signal-allow)" }}>
+                        {JSON.stringify(c.after)}
+                      </span>
                     </li>
                   ))}
                 </ul>
               )}
             </div>
 
-            <div className="p-4 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--bg-elevated)] space-y-3">
+            <div className="p-4 rounded-xl border-2 border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-3">
               <div className="font-mono text-xs font-bold uppercase">
                 2. Dry-Run Impact on Recent Traffic ({requests.length} requests):
               </div>
               <div className="font-mono text-xs">
                 Newly Blocked Requests:{" "}
-                <strong className="text-[#ff4d4d]">{policyDryRunAndDiff.newlyBlocked}</strong>
+                <strong style={{ color: "var(--signal-block)" }}>
+                  {policyDryRunAndDiff.newlyBlocked}
+                </strong>
               </div>
               <div className="space-y-1.5">
                 {policyDryRunAndDiff.deltas.map((d) => (
                   <div
                     key={d.id}
-                    className="flex items-center justify-between p-2 rounded bg-[#061c24] text-[#f3ecdc] font-mono text-xs"
+                    className="flex items-center justify-between p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-card)] font-mono text-xs"
                   >
                     <span>{d.id}</span>
                     <span>
                       {d.before.toUpperCase()} →{" "}
-                      <strong className={d.changed ? "text-[#ffb300]" : "text-[#2fd27a]"}>
+                      <strong
+                        style={{
+                          color: d.changed ? "var(--signal-redact)" : "var(--signal-allow)",
+                        }}
+                      >
                         {d.after.toUpperCase()} {d.changed ? "(CHANGED!)" : "(SAME)"}
                       </strong>
                     </span>
@@ -883,11 +943,12 @@ semanticCache:
             {approvals.map((item) => (
               <div
                 key={item.id}
-                className="p-4 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--bg-elevated)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                className="p-4 rounded-xl border-2 border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
               >
                 <div className="space-y-1 font-mono text-xs">
                   <div className="font-bold text-sm">
-                    {item.id} • Tool: <span className="text-[#29dfeb]">{item.toolName}</span>
+                    {item.id} • Tool:{" "}
+                    <span style={{ color: "var(--sculk-cyan)" }}>{item.toolName}</span>
                   </div>
                   <div className="text-[var(--ink-muted)]">Args: {item.argumentsJson}</div>
                   <div className="text-[11px]">
@@ -905,7 +966,7 @@ semanticCache:
                         );
                         playGatehouseSfx("allow");
                       }}
-                      className="px-3.5 py-1.5 rounded-lg border-2 border-[#14121b] bg-[#2fd27a] text-[#041016] font-mono text-xs font-bold uppercase cursor-pointer"
+                      className="px-3.5 py-1.5 rounded-lg border-2 border-[#14121b] bg-[#22c55e] text-[#041016] font-mono text-xs font-bold uppercase cursor-pointer"
                     >
                       ✓ Approve Execution
                     </button>
@@ -917,7 +978,7 @@ semanticCache:
                         );
                         playGatehouseSfx("block");
                       }}
-                      className="px-3.5 py-1.5 rounded-lg border-2 border-[#14121b] bg-[#ff4d4d] text-white font-mono text-xs font-bold uppercase cursor-pointer"
+                      className="px-3.5 py-1.5 rounded-lg border-2 border-[#14121b] bg-[#ef4444] text-white font-mono text-xs font-bold uppercase cursor-pointer"
                     >
                       ✗ Deny Tool Call
                     </button>
@@ -929,22 +990,23 @@ semanticCache:
         </div>
       )}
 
-      {/* TAB 5: TAMPER-EVIDENT SHA-256 AUDIT CHAIN DEMO ("LEDGER") */}
+      {/* TAB 5: TAMPER-EVIDENT SHA-256 AUDIT CHAIN DEMO */}
       {activeTab === "audit" && (
-        <div className="gate-card p-6 bg-[#061c24] border-[#29dfeb] text-[#f3ecdc] space-y-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[#29dfeb]/40 pb-4">
+        <div className="gate-card p-6 space-y-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b-2 border-[var(--border-subtle)] pb-4">
             <div className="flex items-center gap-3">
               <img
                 src={bakeSpriteToSvgDataUrl("ledger", 4)}
                 alt="Ledger Tortoise"
-                className={`w-12 h-12 rounded-xl border-2 p-1 transition-transform ${
-                  currentChainVerification.valid
-                    ? "border-[#2fd27a] bg-[#041016]"
-                    : "border-[#ff4d4d] bg-[#2a0910] rotate-180"
+                className={`w-12 h-12 rounded-xl border-2 p-1 transition-transform bg-[#061c24] ${
+                  currentChainVerification.valid ? "border-[#22c55e]" : "border-[#ef4444] rotate-180"
                 }`}
               />
               <div>
-                <span className="font-mono text-xs font-bold uppercase text-[#29dfeb]">
+                <span
+                  className="font-mono text-xs font-bold uppercase"
+                  style={{ color: "var(--sculk-cyan)" }}
+                >
                   ■ INTERACTIVE SHA-256 HASH-CHAIN VERIFIER
                 </span>
                 <h2 className="text-xl font-bold">
@@ -956,21 +1018,15 @@ semanticCache:
             </div>
             <button
               type="button"
-              onClick={() =>
-                setAuditPayloads([
-                  '{"requestId":"req_sculk_901","action":"block","rule":"injection.ignore_previous"}',
-                  '{"requestId":"req_sculk_902","action":"redact","rule":"pii.email"}',
-                  '{"requestId":"req_sculk_903","action":"allow","cacheHit":true}',
-                  '{"requestId":"req_sculk_904","action":"allow","model":"gemini-2.5-pro"}',
-                ])
-              }
-              className="px-3.5 py-2 rounded-xl border-2 border-[#29dfeb] bg-[#082732] text-[#7df9ff] font-mono text-xs font-bold uppercase cursor-pointer"
+              onClick={() => setAuditPayloads(ORIGINAL_AUDIT_PAYLOADS)}
+              className="px-3.5 py-2 rounded-xl border-2 border-[var(--border-ink)] font-mono text-xs font-bold uppercase cursor-pointer"
+              style={{ backgroundColor: "var(--badge-bg)", color: "var(--badge-text)" }}
             >
               ↺ Restore Original Chain
             </button>
           </div>
 
-          <p className="font-mono text-xs text-[#9ba8b8]">
+          <p className="font-mono text-xs text-[var(--ink-muted)]">
             Try editing any JSON character in Block #1 or Block #2 below to simulate a database
             intruder altering historical logs. Watch how SHA-256 cascading hashes immediately
             invalidate every downstream block!
@@ -980,11 +1036,12 @@ semanticCache:
             {currentChainVerification.blocks.map((b, idx) => (
               <div
                 key={b.seq}
-                className={`p-4 rounded-xl border-2 space-y-2 transition-all ${
-                  b.corrupted
-                    ? "border-[#ff4d4d] bg-[#2a0910] text-[#ffd6d6]"
-                    : "border-[#2fd27a] bg-[#072118] text-[#d4ffea]"
-                }`}
+                className="p-4 rounded-xl border-2 space-y-2 transition-all"
+                style={{
+                  borderColor: b.corrupted ? "var(--signal-block)" : "var(--signal-allow)",
+                  backgroundColor: b.corrupted ? "var(--bg-danger)" : "var(--bg-ok)",
+                  color: b.corrupted ? "var(--text-danger)" : "var(--text-ok)",
+                }}
               >
                 <div className="flex items-center justify-between font-mono text-xs font-bold">
                   <span>BLOCK SEQ #{b.seq}</span>
@@ -1002,7 +1059,7 @@ semanticCache:
                     playGatehouseSfx("block");
                   }}
                   aria-label={`Audit Record Sequence ${b.seq} Canonical JSON`}
-                  className="w-full p-2 rounded bg-black/50 border border-white/20 font-mono text-xs text-white"
+                  className="w-full p-2 rounded bg-[var(--bg-card)] border-2 border-[var(--border-subtle)] font-mono text-xs text-[var(--ink)]"
                 />
                 <div className="font-mono text-[10px] truncate">
                   RECORD_HASH: <strong>{b.currentHash}</strong>
