@@ -90,6 +90,32 @@ export class TenantRepository {
       .where(and(eq(schema.apiKeys.tenantId, tenantId), eq(schema.apiKeys.id, keyId)));
   }
 
+  async listApiKeys(tenantId: string) {
+    const rows = await this.db
+      .select({
+        id: schema.apiKeys.id,
+        name: schema.apiKeys.name,
+        prefix: schema.apiKeys.prefix,
+        scopesJson: schema.apiKeys.scopesJson,
+        expiresAt: schema.apiKeys.expiresAt,
+        revokedAt: schema.apiKeys.revokedAt,
+        createdAt: schema.apiKeys.createdAt,
+      })
+      .from(schema.apiKeys)
+      .where(eq(schema.apiKeys.tenantId, tenantId))
+      .orderBy(desc(schema.apiKeys.createdAt));
+
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      prefix: r.prefix,
+      scopes: JSON.parse(r.scopesJson) as ApiKeyScope[],
+      expiresAt: r.expiresAt,
+      revokedAt: r.revokedAt,
+      createdAt: r.createdAt,
+    }));
+  }
+
   /**
    * Encrypts an upstream provider key (e.g. Gemini API key) with AES-256-GCM before saving.
    */
@@ -144,6 +170,18 @@ export class TenantRepository {
       apiKey,
       baseUrl: row.baseUrl,
     };
+  }
+  async listProviderCredentials(tenantId: string) {
+    return this.db
+      .select({
+        id: schema.providerCredentials.id,
+        provider: schema.providerCredentials.provider,
+        baseUrl: schema.providerCredentials.baseUrl,
+        createdAt: schema.providerCredentials.createdAt,
+      })
+      .from(schema.providerCredentials)
+      .where(eq(schema.providerCredentials.tenantId, tenantId))
+      .orderBy(desc(schema.providerCredentials.createdAt));
   }
 
   async insertRequest(tenantId: string, req: Omit<typeof schema.requests.$inferInsert, "tenantId">) {

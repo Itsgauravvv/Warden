@@ -117,7 +117,7 @@ describe("Step 1B: Tenant API Keys & Strict Cross-Tenant Isolation", () => {
     await repo.insertRequest("tenant_alpha", {
       id: "req_secret_alpha",
       provider: "gemini",
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash-lite",
       finalAction: "allow",
       promptRedacted: "Alpha top-secret roadmap",
       createdAt: Date.now(),

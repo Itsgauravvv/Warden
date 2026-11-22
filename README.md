@@ -120,7 +120,7 @@ const client = new OpenAI({
 });
 
 const response = await client.chat.completions.create({
-  model: "gemini-2.5-flash",
+  model: "gemini-3.5-flash-lite",
   messages: [
     { role: "system", content: "You are a helpful cloud architecture assistant." },
     { role: "user", content: "Explain Cloudflare Durable Objects in 2 sentences." },
@@ -139,7 +139,7 @@ curl -X POST http://127.0.0.1:8787/v1/chat/completions \
   -H "X-Warden-Provider: gemini" \
   -H "X-Warden-Provider-Key: $GEMINI_API_KEY" \
   -d '{
-    "model": "gemini-2.5-flash",
+    "model": "gemini-3.5-flash-lite",
     "messages": [
       { "role": "user", "content": "Send my invoice to billing@acme-corp.org" }
     ]

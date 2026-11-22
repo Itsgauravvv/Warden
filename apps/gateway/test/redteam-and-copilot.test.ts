@@ -112,7 +112,7 @@ toolFirewall:
     await repo.insertRequest("t_sandbox", {
       id: "req_hist_pii",
       provider: "gemini",
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash-lite",
       finalAction: "redact",
       promptRedacted: "Please email billing@acme-corp.org with my invoice.",
       responseRedacted: "Done.",

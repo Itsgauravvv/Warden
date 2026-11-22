@@ -33,7 +33,7 @@ const client = new OpenAI({
 });
 
 const response = await client.chat.completions.create({
-  model: "gemini-2.5-flash",
+  model: "gemini-3.5-flash-lite",
   messages: [{ role: "user", content: "Inspect this scroll at the gate!" }],
 });`,
   },
@@ -53,7 +53,7 @@ client = OpenAI(
 )
 
 res = client.chat.completions.create(
-    model="gemini-2.5-flash",
+    model="gemini-3.5-flash-lite",
     messages=[{"role": "user", "content": "Inspect this scroll at the gate!"}],
 )
 print(res.choices[0].message.content)`,
@@ -67,7 +67,7 @@ print(res.choices[0].message.content)`,
   -H "${BRAND.headerPrefix}-Provider: gemini" \\
   -H "${BRAND.headerPrefix}-Provider-Key: $GEMINI_API_KEY" \\
   -d '{
-    "model": "gemini-2.5-flash",
+    "model": "gemini-3.5-flash-lite",
     "messages": [{"role": "user", "content": "Inspect this scroll at the gate!"}]
   }'`,
   },

@@ -1,5 +1,5 @@
 "use client";
-
+import { KeysVaultTab } from "@/components/dashboard/KeysVaultTab";
 import React, { useState, useMemo, useEffect } from "react";
 import { BRAND } from "@warden/brand";
 import {
@@ -34,7 +34,7 @@ const INITIAL_REQUESTS: DashboardRequestRecord[] = [
   {
     id: "req_sculk_901",
     timestamp: "Just now",
-    model: "gemini-2.5-flash",
+    model: "gemini-3.5-flash-lite",
     provider: "gemini",
     action: "block",
     cached: false,
@@ -80,7 +80,7 @@ const INITIAL_REQUESTS: DashboardRequestRecord[] = [
   {
     id: "req_sculk_902",
     timestamp: "14s ago",
-    model: "gemini-2.5-flash",
+    model: "gemini-3.5-flash-lite",
     provider: "gemini",
     action: "redact",
     cached: false,
@@ -127,7 +127,7 @@ const INITIAL_REQUESTS: DashboardRequestRecord[] = [
   {
     id: "req_sculk_903",
     timestamp: "42s ago",
-    model: "gemini-2.5-flash",
+    model: "gemini-3.5-flash-lite",
     provider: "gemini",
     action: "allow",
     cached: true,
@@ -250,7 +250,7 @@ const ORIGINAL_AUDIT_PAYLOADS = [
 
 export default function DashboardAppPage() {
   const [activeTab, setActiveTab] = useState<
-    "traffic" | "replay" | "policylab" | "approvals" | "audit"
+    "traffic" | "replay" | "policylab" | "approvals" | "audit" | "vault"
   >("traffic");
 
   const [requests, setRequests] = useState<DashboardRequestRecord[]>(INITIAL_REQUESTS);
@@ -352,7 +352,7 @@ export default function DashboardAppPage() {
     const newRec: DashboardRequestRecord = {
       id: `req_live_${Math.floor(100 + Math.random() * 900)}`,
       timestamp: "Just now",
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash-lite",
       provider: "gemini",
       action: evalRes.finalAction,
       cached: false,
@@ -486,6 +486,7 @@ semanticCache:
               label: `4. Approvals (${approvals.filter((a) => a.status === "pending").length})`,
             },
             { id: "audit", label: "5. Tamper Audit Chain" },
+            { id: "vault", label: "6. Keys & Gemini Vault" },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1069,6 +1070,8 @@ semanticCache:
           </div>
         </div>
       )}
+      {/* TAB 6: REAL D1 KEYS & AES-256-GCM PROVIDER VAULT */}
+      {activeTab === "vault" && <KeysVaultTab />}
     </div>
   );
 }

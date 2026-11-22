@@ -11,7 +11,7 @@ const CURL_SNIPPET = `curl -X POST http://127.0.0.1:8787/v1/chat/completions \\
   -H "${BRAND.headerPrefix}-Provider: gemini" \\
   -H "${BRAND.headerPrefix}-Provider-Key: $GEMINI_API_KEY" \\
   -d '{
-    "model": "gemini-2.5-flash",
+    "model": "gemini-3.5-flash-lite",
     "messages": [
       { "role": "user", "content": "Explain Cloudflare Durable Objects in 2 sentences." }
     ]

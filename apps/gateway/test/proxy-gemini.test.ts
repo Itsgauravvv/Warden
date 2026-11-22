@@ -65,7 +65,7 @@ describe("Step 2: Gemini OpenAI-Compatible Proxy, AES-GCM Encryption & SSRF Guar
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         messages: [{ role: "user", content: "Hello Gatekeeper!" }],
       }),
     });
@@ -104,7 +104,7 @@ describe("Step 2: Gemini OpenAI-Compatible Proxy, AES-GCM Encryption & SSRF Guar
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         stream: true,
         messages: [{ role: "user", content: "Stream this scroll" }],
       }),

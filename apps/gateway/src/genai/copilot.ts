@@ -100,7 +100,7 @@ export async function draftPolicyWithQuill(options: {
         provider: "gemini",
         apiKey: options.apiKey,
         body: {
-          model: "gemini-2.5-flash",
+          model: "gemini-3.5-flash-lite",
           temperature: 0.1,
           stream: false,
           messages: [

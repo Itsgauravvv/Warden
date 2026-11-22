@@ -32,7 +32,7 @@ export const ChatMessageSchema = z.object({
 
 export const ChatCompletionRequestSchema = z
   .object({
-    model: z.string().default("gemini-2.5-flash"),
+    model: z.string().default("gemini-3.5-flash-lite"),
     messages: z.array(ChatMessageSchema).min(1),
     stream: z.boolean().optional().default(false),
     temperature: z.number().min(0).max(2).optional(),
@@ -52,7 +52,7 @@ export const PROVIDER_BASE_URLS: Record<Exclude<ProviderName, "openai_compatible
 
 export const DEFAULT_MODELS: Record<ProviderName, { id: string; provider: ProviderName }[]> = {
   gemini: [
-    { id: "gemini-2.5-flash", provider: "gemini" },
+    { id: "gemini-3.5-flash-lite", provider: "gemini" },
     { id: "gemini-2.5-pro", provider: "gemini" },
     { id: "gemini-2.0-flash", provider: "gemini" },
   ],
@@ -60,7 +60,7 @@ export const DEFAULT_MODELS: Record<ProviderName, { id: string; provider: Provid
     { id: "llama-3.3-70b-versatile", provider: "groq" },
     { id: "llama-3.1-8b-instant", provider: "groq" },
   ],
-  openrouter: [{ id: "google/gemini-2.5-flash", provider: "openrouter" }],
+  openrouter: [{ id: "google/gemini-3.5-flash-lite", provider: "openrouter" }],
   workers_ai: [{ id: "@cf/meta/llama-3.1-8b-instruct", provider: "workers_ai" }],
   openai_compatible: [{ id: "custom-model", provider: "openai_compatible" }],
 };

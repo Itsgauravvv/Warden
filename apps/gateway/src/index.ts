@@ -1,14 +1,18 @@
 import { Hono } from "hono";
-import { createAdminRedTeamRoutes } from "./routes/admin-redteam.js";
+import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
+import { drizzle } from "drizzle-orm/d1";
 import { z } from "zod";
 import { BRAND } from "@warden/brand";
 import { runEvaluationSuite } from "@warden/eval";
-import type { TenantRepository } from "./db/repository.js";
+import * as schema from "./db/schema.js";
+import { TenantRepository, type WardenDb } from "./db/repository.js";
 import type { ApiKeyScope } from "./auth/api-key.js";
 import { createV1Routes } from "./routes/v1.js";
 import { createAdminPolicyRoutes } from "./routes/admin-policies.js";
 import { createAdminAuditRoutes } from "./routes/admin-audit.js";
+import { createAdminRedTeamRoutes } from "./routes/admin-redteam.js";
+import { createAdminVaultRoutes } from "./routes/admin-vault.js";
 import { RateLimitEngine, RateLimiterDO } from "./durable-objects/rate-limiter.js";
 import { SemanticCache } from "./cache/semantic-cache.js";
 import { JudgeBudgetTracker, buildGroundedIncidentExplanation } from "./genai/judge.js";
@@ -21,6 +25,12 @@ export interface AuthContext {
   projectId: string | null;
   scopes: ApiKeyScope[];
 }
+
+export type AppBindings = {
+  DB?: Parameters<typeof drizzle>[0];
+  WARDEN_ENCRYPTION_SECRET?: string;
+  WARDEN_BOOTSTRAP_SECRET?: string;
+};
 
 export type AppVariables = {
   auth: AuthContext;
@@ -35,7 +45,13 @@ export interface GatewayAppOptions {
   rateLimiter?: RateLimitEngine;
   semanticCache?: SemanticCache;
   judgeBudget?: JudgeBudgetTracker;
+  bootstrapSecret?: string;
 }
+
+const BootstrapTenantSchema = z.object({
+  name: z.string().min(2).max(80),
+  isSandbox: z.boolean().optional(),
+});
 
 export function createGatewayApp(
   repoOrOptions?: TenantRepository | GatewayAppOptions,
@@ -45,19 +61,49 @@ export function createGatewayApp(
     repoOrOptions !== undefined &&
     !("createTenant" in repoOrOptions);
 
-  const repo = isOptions ? repoOrOptions.repo : repoOrOptions;
+  const injectedRepo = isOptions ? repoOrOptions.repo : repoOrOptions;
   const fetchImpl = isOptions ? repoOrOptions.customFetch : customFetch;
   const rateLimiter = (isOptions && repoOrOptions.rateLimiter) || new RateLimitEngine();
   const semanticCache = (isOptions && repoOrOptions.semanticCache) || new SemanticCache();
   const judgeBudget = (isOptions && repoOrOptions.judgeBudget) || new JudgeBudgetTracker();
+  const configuredBootstrapSecret = isOptions ? repoOrOptions.bootstrapSecret : undefined;
 
-  const app = new Hono<{ Variables: AppVariables }>();
+  const app = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
+
+  app.use(
+    "*",
+    cors({
+      origin: "*",
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowHeaders: [
+        "Content-Type",
+        "Authorization",
+        `${BRAND.headerPrefix}-Provider`,
+        `${BRAND.headerPrefix}-Provider-Key`,
+        `${BRAND.headerPrefix}-Provider-Base-Url`,
+        `${BRAND.headerPrefix}-Project-Id`,
+        `${BRAND.headerPrefix}-Session-Id`,
+        `${BRAND.headerPrefix}-Bootstrap-Secret`,
+      ],
+      exposeHeaders: [
+        `${BRAND.headerPrefix}-Request-Id`,
+        `${BRAND.headerPrefix}-Action`,
+        `${BRAND.headerPrefix}-Cache`,
+        `${BRAND.headerPrefix}-Provider`,
+        `${BRAND.headerPrefix}-RateLimit-Remaining-RPM`,
+      ],
+    })
+  );
 
   app.use("*", secureHeaders());
+
   app.use("*", async (c, next) => {
     c.header(`${BRAND.headerPrefix}-Gate`, BRAND.name);
-    if (repo) {
-      c.set("repo", repo);
+    if (injectedRepo) {
+      c.set("repo", injectedRepo);
+    } else if (c.env?.DB) {
+      const db = drizzle(c.env.DB, { schema }) as unknown as WardenDb;
+      c.set("repo", new TenantRepository(db, c.env.WARDEN_ENCRYPTION_SECRET));
     }
     c.set("rateLimiter", rateLimiter);
     c.set("semanticCache", semanticCache);
@@ -75,6 +121,76 @@ export function createGatewayApp(
   app.get("/readyz", (c) => {
     const isReady = Boolean(c.get("repo"));
     return c.json({ ready: isReady }, isReady ? 200 : 503);
+  });
+
+  // Self-serve tenant onboarding (creates tenant + initial wrd_ API key in D1)
+  app.post("/bootstrap/tenant", async (c) => {
+    const requiredSecret = configuredBootstrapSecret ?? c.env?.WARDEN_BOOTSTRAP_SECRET;
+    if (requiredSecret) {
+      const supplied = c.req.header(`${BRAND.headerPrefix}-Bootstrap-Secret`);
+      if (supplied !== requiredSecret) {
+        return c.json(
+          { error: { message: "Invalid or missing bootstrap secret", code: "unauthorized" } },
+          401
+        );
+      }
+    }
+
+    const activeRepo = c.get("repo");
+    if (!activeRepo) {
+      return c.json(
+        { error: { message: "D1 database binding is not ready", code: "service_unavailable" } },
+        503
+      );
+    }
+
+    const parsed = BootstrapTenantSchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json(
+        { error: { message: "Invalid tenant details", details: parsed.error.flatten() } },
+        400
+      );
+    }
+
+    const tenantId = `t_${crypto.randomUUID().slice(0, 12)}`;
+    const slugBase = parsed.data.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 24);
+    const slug = `${slugBase || "tenant"}-${crypto.randomUUID().slice(0, 6)}`;
+    const isSandbox = parsed.data.isSandbox ?? true;
+
+    await activeRepo.createTenant({
+      id: tenantId,
+      name: parsed.data.name,
+      slug,
+      isSandbox,
+    });
+
+    const issued = await activeRepo.createApiKey({
+      id: `key_${crypto.randomUUID()}`,
+      tenantId,
+      name: "Initial Admin & Proxy Key",
+      scopes: ["proxy:write", "admin:read", "admin:write"],
+      isSandbox,
+    });
+
+    return c.json(
+      {
+        data: {
+          tenantId,
+          name: parsed.data.name,
+          slug,
+          isSandbox,
+          apiKey: issued.rawKey,
+          keyId: issued.id,
+          prefix: issued.prefix,
+          scopes: issued.scopes,
+        },
+      },
+      201
+    );
   });
 
   // Public evaluation benchmark endpoint for the /eval transparency page
@@ -100,7 +216,13 @@ export function createGatewayApp(
   // Mount OpenAI-compatible /v1 proxy routes (defaults to Gemini)
   app.route(
     "/v1",
-    createV1Routes({ repo, customFetch: fetchImpl, rateLimiter, semanticCache, judgeBudget })
+    createV1Routes({
+      repo: injectedRepo,
+      customFetch: fetchImpl,
+      rateLimiter,
+      semanticCache,
+      judgeBudget,
+    })
   );
 
   // Tenant API Key Auth Middleware for /admin/v1/*
@@ -165,12 +287,12 @@ export function createGatewayApp(
     if (!auth.scopes.includes("admin:write")) {
       return c.json({ error: { message: "Requires admin:write scope", code: "forbidden" } }, 403);
     }
-    const schema = z.object({
+    const schemaBody = z.object({
       rpmLimit: z.number().int().positive().optional(),
       dailyTokenLimit: z.number().int().positive().optional(),
       monthlyCostLimitUsd: z.number().positive().optional(),
     });
-    const parsed = schema.safeParse(await c.req.json());
+    const parsed = schemaBody.safeParse(await c.req.json());
     if (!parsed.success) {
       return c.json({ error: { message: "Invalid budget limits" } }, 400);
     }
@@ -187,9 +309,10 @@ export function createGatewayApp(
     return c.json({ data: c.get("semanticCache").getTenantStats(auth.tenantId) });
   });
 
-  app.route("/admin/v1/policies", createAdminPolicyRoutes(repo));
-  app.route("/admin/v1", createAdminAuditRoutes(repo));
-  app.route("/admin/v1/redteam", createAdminRedTeamRoutes(repo, fetchImpl));
+  app.route("/admin/v1/policies", createAdminPolicyRoutes(injectedRepo));
+  app.route("/admin/v1/redteam", createAdminRedTeamRoutes(injectedRepo, fetchImpl));
+  app.route("/admin/v1/vault", createAdminVaultRoutes(injectedRepo));
+  app.route("/admin/v1", createAdminAuditRoutes(injectedRepo));
 
   return app;
 }

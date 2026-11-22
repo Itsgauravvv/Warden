@@ -60,7 +60,7 @@ describe("Step 5: Rate Limits, Budgets (Toll) & Semantic Cache Isolation (Echo)"
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         messages: [{ role: "user", content: "Ping the gatehouse" }],
       }),
     };
@@ -124,7 +124,7 @@ semanticCache:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         messages: [{ role: "user", content: "Explain how hash-chained audit logs work in detail." }],
       }),
     });
@@ -141,7 +141,7 @@ semanticCache:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         messages: [{ role: "user", content: "Explain how hash-chained audit logs work in detail!" }],
       }),
     });
@@ -166,7 +166,7 @@ semanticCache:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         messages: [{ role: "user", content: "Explain how hash-chained audit logs work in detail." }],
       }),
     });

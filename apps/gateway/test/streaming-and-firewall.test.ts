@@ -54,7 +54,7 @@ describe("Step 7: Sliding-Window SSE Stream Scanner & Agent Tool-Call Firewall",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         stream: true,
         messages: [{ role: "user", content: "Show config" }],
       }),
@@ -133,7 +133,7 @@ toolFirewall:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         messages: [{ role: "user", content: "Read system file" }],
       }),
     });
@@ -178,7 +178,7 @@ toolFirewall:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         messages: [
           { role: "user", content: "Summarize the invoice document" },
           {
@@ -231,7 +231,7 @@ toolFirewall:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash-lite",
         messages: [{ role: "user", content: "Send my weekly report to boss@company.com" }],
       }),
     });
