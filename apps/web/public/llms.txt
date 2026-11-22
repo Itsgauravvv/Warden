@@ -1,0 +1,33 @@
+# Warden — Open-Source AI & LLM Security Gateway
+
+> Warden is an OpenAI-compatible edge security proxy built with Hono (Cloudflare Workers + D1 SQLite + Durable Objects) and Next.js 15. It protects LLM applications and autonomous AI agents with a 4-stage detection cascade, reversible PII redaction, sliding-window SSE output scanning, an Agent Tool-Call Firewall with Confused-Deputy taint tracking, tenant-isolated semantic caching, and SHA-256 hash-chained audit logs.
+
+## Core Routes
+- `/` — Interactive Gatehouse Showcase with Extruded Voxel Title & Live 3-Lane SSE Stream
+- `/demo` — Imp Red-Team Siege Mode & Split-Screen Protected vs. Unprotected Agent Demo
+- `/app` — Multi-Tenant Command Watchtower Dashboard (Traffic, Grounded Explainer, Session Taint Replay, Policy Lab, Approvals, Tamper-Evident Audit Chain)
+- `/learn` — Interactive Obfuscation X-Ray & OWASP LLM Top 10 (2025) Guide
+- `/eval` — Live CI Evaluation Benchmarks (TPR, FPR, P95 Latency, SPDX License Manifest)
+- `/docs` — API Reference, Policy-as-Code YAML Schema, Headers & Self-Hosting Guide
+
+## Gateway Endpoints (Default Local: http://127.0.0.1:8787)
+- `POST /v1/chat/completions` — OpenAI-compatible proxy (Gemini 2.5 Flash default, SSE streaming + Tool Firewall)
+- `GET /v1/models` — Supported upstream models
+- `GET /eval/summary` — Live TPR/FPR benchmark JSON
+- `GET /admin/v1/requests/:id/explain` — Grounded Incident Explainer citing verified finding IDs
+- `POST /admin/v1/policies/:id/versions` — Immutable Policy-as-Code YAML versioning
+- `GET /admin/v1/policies/:id/diff?from=1&to=2` — Structural policy diff
+- `POST /admin/v1/policies/:id/rollback` — Instant policy rollback
+- `POST /admin/v1/policies/dry-run` — Replay candidate policy on historical traffic
+- `GET /admin/v1/audit/verify` — Verify SHA-256 hash chain and pinpoint `firstCorruptedSeq`
+- `POST /admin/v1/audit/seal` — Seal audit batch with HMAC-SHA256 signature
+- `POST /admin/v1/redteam/siege` — Run Imp multi-round mutated red-team attacks (sandbox tenants only)
+- `POST /admin/v1/redteam/copilot/draft` — Draft schema-valid YAML with Quill Policy Copilot
+
+## Monorepo Packages
+- `@warden/brand`: Shared brand constants, header prefixes (`X-Warden-*`), and cast definitions
+- `@warden/policy-schema`: Zod v1.0 Policy schema, YAML parser, and structural diff utility
+- `@warden/detectors`: Normalizer (zero-width/homoglyph/Base64), Luhn PII redactor, secret scanner, injection rules, canary leak guard
+- `@warden/eval`: 24-case labeled corpus with SPDX licenses and CI regression gate (TPR >= 95%, FPR <= 5%)
+- `@warden/gateway`: Hono API, Drizzle ORM D1 schema, AES-256-GCM encryption, SSRF guard, Durable Object rate limiter, semantic cache, tool firewall, Stage 3 classifier, Stage 4 Gemini Judge, Imp & Quill
+- `@warden/web`: Next.js 15 App Router UI with Day Watch, Night Sculk, and High Contrast themes
