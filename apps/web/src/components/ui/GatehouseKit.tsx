@@ -85,9 +85,9 @@ export function SectionGateLabel({
   color?: string;
 }) {
   return (
-    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md border-2 border-[var(--border-ink)] bg-[var(--bg-elevated)] font-mono text-xs font-semibold uppercase tracking-widest">
+    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md border-2 border-[var(--border-ink)] bg-[var(--bg-elevated)] text-[var(--ink)] font-mono text-xs font-bold uppercase tracking-widest">
       <span
-        className="w-2.5 h-2.5 inline-block border border-[#14121b]"
+        className="w-2.5 h-2.5 inline-block border border-[#14121b] shrink-0"
         style={{ backgroundColor: color }}
         aria-hidden="true"
       />

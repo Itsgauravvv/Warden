@@ -49,7 +49,7 @@ export async function GET(request: Request) {
 
       // Emit first event immediately, then every 2.5s
       pushEvent();
-      timer = setInterval(pushEvent, 2500);
+      timer = setInterval(pushEvent, 3000);
 
       request.signal.addEventListener("abort", () => {
         if (timer) clearInterval(timer);

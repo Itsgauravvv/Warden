@@ -2,35 +2,51 @@
 
 :root,
 [data-theme="light"] {
-  --bg-primary: #f3ecdc;
-  --bg-card: #fbf7ee;
-  --bg-elevated: #ebe2ce;
+  --bg-primary: #f4eee1;
+  --bg-card: #fffdf8;
+  --bg-elevated: #ece3d0;
+  --bg-hero-from: #fffdf8;
+  --bg-hero-to: #ede4d1;
+  --bg-panel: #f7f2e7;
+  --bg-marquee: #14121b;
+  --marquee-text: #7df9ff;
+  --marquee-sep: #29dfeb;
   --ink: #14121b;
-  --ink-muted: #524c61;
+  --ink-muted: #4b4658;
   --border-ink: #14121b;
+  --border-subtle: #c8beaa;
   --shadow-ink: #14121b;
 
   /* Verdict & Signal Colors */
-  --signal-allow: #2fd27a;
-  --signal-redact: #ffb300;
-  --signal-block: #ff4d4d;
-  --signal-cache: #3d8bff;
-  --signal-accent: #7c5cff;
+  --signal-allow: #22c55e;
+  --signal-redact: #f59e0b;
+  --signal-block: #ef4444;
+  --signal-cache: #2563eb;
+  --signal-accent: #6d28d9;
 
-  /* Deep Dark Sculk Accents (Minecraft Warden touch) */
-  --sculk-Abyss: #061c24;
-  --sculk-teal: #0b4f60;
-  --sculk-cyan: #00b8c8;
-  --sculk-soul: #7df9ff;
+  /* Deep Dark Sculk Accents tuned for crisp Light readability */
+  --sculk-abyss: #e8e0cf;
+  --sculk-teal: #0e6b7d;
+  --sculk-cyan: #087f8c;
+  --sculk-soul: #0b5d69;
+  --badge-bg: #14121b;
+  --badge-text: #7df9ff;
 }
 
 [data-theme="dark"] {
   --bg-primary: #0d0b14;
   --bg-card: #141220;
   --bg-elevated: #081822;
+  --bg-hero-from: #061c24;
+  --bg-hero-to: #0d0b14;
+  --bg-panel: #041016;
+  --bg-marquee: #061c24;
+  --marquee-text: #7df9ff;
+  --marquee-sep: #0b4f60;
   --ink: #f3ecdc;
   --ink-muted: #9ba8b8;
   --border-ink: #29dfeb;
+  --border-subtle: #0b4f60;
   --shadow-ink: #040d12;
 
   --signal-allow: #2fd27a;
@@ -39,27 +55,42 @@
   --signal-cache: #3d8bff;
   --signal-accent: #7c5cff;
 
-  --sculk-Abyss: #041016;
+  --sculk-abyss: #041016;
   --sculk-teal: #0e6b7d;
   --sculk-cyan: #29dfeb;
   --sculk-soul: #b8ffff;
+  --badge-bg: #061c24;
+  --badge-text: #29dfeb;
 }
 
 [data-theme="high-contrast"] {
   --bg-primary: #000000;
   --bg-card: #0a0a0a;
   --bg-elevated: #141414;
+  --bg-hero-from: #000000;
+  --bg-hero-to: #0d0d0d;
+  --bg-panel: #000000;
+  --bg-marquee: #000000;
+  --marquee-text: #00ffff;
+  --marquee-sep: #ffffff;
   --ink: #ffffff;
-  --ink-muted: #e0e0e0;
+  --ink-muted: #e5e5e5;
   --border-ink: #ffffff;
-  --shadow-ink: #29dfeb;
+  --border-subtle: #ffffff;
+  --shadow-ink: #00ffff;
 
   --signal-allow: #00ff66;
   --signal-redact: #ffd000;
   --signal-block: #ff3333;
   --signal-cache: #33aaff;
-  --signal-accent: #b28dff;
+  --signal-accent: #c4a7ff;
+
+  --sculk-abyss: #000000;
+  --sculk-teal: #00cccc;
   --sculk-cyan: #00ffff;
+  --sculk-soul: #ffffff;
+  --badge-bg: #000000;
+  --badge-text: #00ffff;
 }
 
 body {
@@ -74,27 +105,49 @@ body {
   min-height: 100vh;
 }
 
-/* Neo-Brutalist Gatehouse Card */
-.gate-card {
-  background-color: var(--bg-card);
-  border: 2px solid var(--border-ink);
-  border-radius: 16px;
-  box-shadow: 0 6px 0 var(--shadow-ink);
-  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1);
+@layer components {
+  .gate-card {
+    background-color: var(--bg-card);
+    color: var(--ink);
+    border: 2px solid var(--border-ink);
+    border-radius: 16px;
+    box-shadow: 0 6px 0 var(--shadow-ink);
+    transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .gate-card-interactive:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 0 var(--shadow-ink);
+  }
+
+  .gate-card-interactive:active {
+    transform: translateY(3px);
+    box-shadow: 0 3px 0 var(--shadow-ink);
+  }
 }
 
-.gate-card-interactive:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 0 var(--shadow-ink);
+/* Smooth right-to-left infinite marquee animation */
+@keyframes warden-marquee-rtl {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
-.gate-card-interactive:active {
-  transform: translateY(3px);
-  box-shadow: 0 3px 0 var(--shadow-ink);
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: warden-marquee-rtl 34s linear infinite;
 }
 
-/* Optional CRT Scanlines Overlay in Night Watch */
+.marquee-track:hover {
+  animation-play-state: paused;
+}
+
+/* Optional CRT Scanlines Overlay */
 .crt-scanlines::after {
   content: "";
   position: fixed;
@@ -114,4 +167,80 @@ body {
 :focus-visible {
   outline: 3px solid var(--sculk-cyan);
   outline-offset: 2px;
+}
+
+/* Smooth upward Sculk spore & rune drift across pages */
+@keyframes warden-spore-rise {
+  0% {
+    transform: translateY(0px) translateX(0px) rotate(0deg);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.55;
+  }
+  50% {
+    transform: translateY(-50vh) translateX(18px) rotate(90deg);
+    opacity: 0.45;
+  }
+  88% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateY(-108vh) translateX(-14px) rotate(180deg);
+    opacity: 0;
+  }
+}
+
+/* Gentle levitation for hero emblems and floating status chips */
+@keyframes warden-levitate {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
+/* Bioluminescent Sculk pulse glow */
+@keyframes warden-sculk-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 18px color-mix(in srgb, var(--sculk-cyan) 28%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 34px color-mix(in srgb, var(--sculk-cyan) 55%, transparent);
+  }
+}
+
+/* Crisp upward entrance animation for cards/sections */
+@keyframes warden-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0px);
+  }
+}
+
+.animate-spore-rise {
+  animation: warden-spore-rise linear infinite;
+}
+
+.animate-levitate {
+  animation: warden-levitate 4.2s ease-in-out infinite;
+}
+
+.animate-levitate-delayed {
+  animation: warden-levitate 5s ease-in-out 1.4s infinite;
+}
+
+.animate-sculk-glow {
+  animation: warden-sculk-glow 3.4s ease-in-out infinite;
+}
+
+.animate-gate-reveal {
+  animation: warden-fade-up 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }

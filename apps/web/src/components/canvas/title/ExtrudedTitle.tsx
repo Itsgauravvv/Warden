@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
+import { useTheme } from "next-themes";
 import { BRAND } from "@warden/brand";
 import { bakeSpriteToSvgDataUrl } from "@/sprites/pixel-sprites";
 import { useUiPreferences, playGatehouseSfx } from "@/lib/preferences-store";
 
-// 5x7 Pixel Bitmap Font so any BRAND.name renders as true extruded voxel blocks
 const PIXEL_FONT: Record<string, string[]> = {
   A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
   B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
@@ -42,7 +42,6 @@ interface VoxelBlock {
   y: number;
   vy: number;
   size: number;
-  colIndex: number;
   settled: boolean;
 }
 
@@ -56,6 +55,9 @@ interface RippleWave {
 export function ExtrudedTitle() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { reduceMotion } = useUiPreferences();
+  const { theme } = useTheme();
+
+  const isLight = theme === "light";
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -63,10 +65,28 @@ export function ExtrudedTitle() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const palette = isLight
+      ? {
+          bg: "#fbf7ee",
+          dot: "rgba(20, 18, 27, 0.12)",
+          side: "#14121b",
+          front: "#0b6e7f",
+          bevel: "#29dfeb",
+          ripple: "11, 110, 127",
+        }
+      : {
+          bg: "#041016",
+          dot: "rgba(41, 223, 235, 0.10)",
+          side: "#0b4f60",
+          front: "#29dfeb",
+          bevel: "#7df9ff",
+          ripple: "41, 223, 235",
+        };
+
     const titleText = BRAND.name.toUpperCase();
     let animationFrameId = 0;
     let width = 640;
-    const height = 160;
+    const height = 164;
     let blocks: VoxelBlock[] = [];
     let topSurfaceY = 48;
     let textStartX = 24;
@@ -75,15 +95,12 @@ export function ExtrudedTitle() {
     const pointer = { x: -9999, y: -9999 };
     const ripples: RippleWave[] = [];
 
-    // Load two patrolling pixel creatures (Warden & Hex) onto HTMLImageElements
     const wardenImg = new Image();
-    wardenImg.src = bakeSpriteToSvgDataUrl("warden", 3);
     const hexImg = new Image();
-    hexImg.src = bakeSpriteToSvgDataUrl("hex", 3);
 
     const walkers = [
-      { img: wardenImg, x: 60, dir: 1, speed: 1.1, bobPhase: 0 },
-      { img: hexImg, x: 340, dir: -1, speed: 1.5, bobPhase: Math.PI },
+      { img: wardenImg, x: 60, dir: 1, speed: 0.9, bobPhase: 0 },
+      { img: hexImg, x: 340, dir: -1, speed: 1.2, bobPhase: Math.PI },
     ];
 
     const buildBlocks = () => {
@@ -91,7 +108,6 @@ export function ExtrudedTitle() {
       canvas.width = width;
       canvas.height = height;
 
-      // Calculate total grid columns for the word
       let totalCols = 0;
       for (let i = 0; i < titleText.length; i++) {
         const ch = titleText[i] ?? " ";
@@ -128,7 +144,6 @@ export function ExtrudedTitle() {
                 y: reduceMotion ? targetY : -30 - (colCursor + c) * 7 - Math.random() * 60,
                 vy: 0,
                 size: blockSize,
-                colIndex: colCursor + c,
                 settled: reduceMotion,
               });
             }
@@ -138,72 +153,45 @@ export function ExtrudedTitle() {
       }
 
       blocks = nextBlocks;
-      walkers[0]!.x = textStartX + 10;
-      walkers[1]!.x = Math.max(textStartX + 40, textEndX - 40);
-    };
-
-    buildBlocks();
-
-    const onMouseMove = (e: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      pointer.x = e.clientX - rect.left;
-      pointer.y = e.clientY - rect.top;
-    };
-
-    const onMouseLeave = () => {
-      pointer.x = -9999;
-      pointer.y = -9999;
-    };
-
-    const onClick = (e: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      ripples.push({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-        radius: 6,
-        alpha: 1,
-      });
-      playGatehouseSfx("sculk_ping");
+      walkers[0]!.x = textStartX + 12;
+      walkers[1]!.x = Math.max(textStartX + 40, textEndX - 42);
     };
 
     let tick = 0;
 
-    const render = () => {
+    const drawFrame = () => {
       tick += 1;
       ctx.clearRect(0, 0, width, height);
 
-      // Subtle Deep Dark Sculk grid backdrop
-      ctx.fillStyle = "#041016";
+      ctx.fillStyle = palette.bg;
       ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = "rgba(41, 223, 235, 0.08)";
+      ctx.fillStyle = palette.dot;
       for (let gx = 12; gx < width; gx += 20) {
         for (let gy = 12; gy < height; gy += 20) {
           ctx.fillRect(gx, gy, 2, 2);
         }
       }
 
-      // Advance click ripples
       for (let i = ripples.length - 1; i >= 0; i--) {
         const rp = ripples[i];
         if (!rp) continue;
-        rp.radius += 5.5;
+        rp.radius += 5;
         rp.alpha -= 0.025;
         if (rp.alpha <= 0) {
           ripples.splice(i, 1);
           continue;
         }
-        ctx.strokeStyle = `rgba(41, 223, 235, ${rp.alpha.toFixed(2)})`;
+        ctx.strokeStyle = `rgba(${palette.ripple}, ${rp.alpha.toFixed(2)})`;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(rp.x, rp.y, rp.radius, 0, Math.PI * 2);
         ctx.stroke();
       }
 
-      // Draw extruded 3D voxel blocks
       const depth = 5;
       for (const b of blocks) {
         if (!b.settled) {
-          b.vy += 0.85; // Gravity rain-in
+          b.vy += 0.85;
           b.y += b.vy;
           if (b.y >= b.targetY) {
             b.y = b.targetY;
@@ -216,7 +204,6 @@ export function ExtrudedTitle() {
           }
         }
 
-        // Cursor proximity lift
         let offsetY = 0;
         if (!reduceMotion) {
           const dx = b.targetX + b.size / 2 - pointer.x;
@@ -225,8 +212,6 @@ export function ExtrudedTitle() {
           if (dist < 75) {
             offsetY -= ((75 - dist) / 75) * 10;
           }
-
-          // Click ripple wave displacement
           for (const rp of ripples) {
             const rDist = Math.hypot(b.targetX - rp.x, b.y - rp.y);
             if (Math.abs(rDist - rp.radius) < 22) {
@@ -238,27 +223,23 @@ export function ExtrudedTitle() {
         const drawX = b.targetX;
         const drawY = b.y + offsetY;
 
-        // 3D Extruded Shadow/Side Face (Deep Sculk Teal)
-        ctx.fillStyle = "#0b4f60";
+        ctx.fillStyle = palette.side;
         ctx.fillRect(drawX + depth, drawY + depth, b.size - 1, b.size - 1);
 
-        // Front Block Face (Sculk Cyan + Soul Glow Highlight)
-        ctx.fillStyle = "#29dfeb";
+        ctx.fillStyle = palette.front;
         ctx.fillRect(drawX, drawY, b.size - 1, b.size - 1);
 
-        // Inner pixel bevel highlight
-        ctx.fillStyle = "#7df9ff";
+        ctx.fillStyle = palette.bevel;
         ctx.fillRect(drawX + 1, drawY + 1, Math.max(2, b.size - 5), 2);
       }
 
-      // Draw pixel creatures walking across the top of the extruded letters
       for (const w of walkers) {
         if (!reduceMotion) {
           w.x += w.dir * w.speed;
           if (w.x > textEndX - 28) w.dir = -1;
           if (w.x < textStartX) w.dir = 1;
         }
-        const bob = reduceMotion ? 0 : Math.abs(Math.sin(tick * 0.12 + w.bobPhase)) * 4;
+        const bob = reduceMotion ? 0 : Math.abs(Math.sin(tick * 0.11 + w.bobPhase)) * 4;
         const creatureSize = 30;
         const drawY = topSurfaceY - creatureSize - bob + 2;
 
@@ -274,37 +255,82 @@ export function ExtrudedTitle() {
           ctx.restore();
         }
       }
+    };
 
+    const renderLoop = () => {
+      drawFrame();
       if (!reduceMotion) {
-        animationFrameId = requestAnimationFrame(render);
+        animationFrameId = requestAnimationFrame(renderLoop);
       }
     };
 
-    render();
+    // Ensure static mode still redraws once sprites finish decoding
+    wardenImg.onload = () => {
+      if (reduceMotion) drawFrame();
+    };
+    hexImg.onload = () => {
+      if (reduceMotion) drawFrame();
+    };
+    wardenImg.src = bakeSpriteToSvgDataUrl("warden", 3);
+    hexImg.src = bakeSpriteToSvgDataUrl("hex", 3);
 
-    window.addEventListener("resize", buildBlocks);
+    buildBlocks();
+    renderLoop();
+
+    const onMouseMove = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      pointer.x = e.clientX - rect.left;
+      pointer.y = e.clientY - rect.top;
+    };
+    const onMouseLeave = () => {
+      pointer.x = -9999;
+      pointer.y = -9999;
+    };
+    const onClick = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      ripples.push({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+        radius: 6,
+        alpha: 1,
+      });
+      playGatehouseSfx("sculk_ping");
+      if (reduceMotion) drawFrame();
+    };
+    const onResize = () => {
+      buildBlocks();
+      if (reduceMotion) drawFrame();
+    };
+
+    window.addEventListener("resize", onResize);
     canvas.addEventListener("mousemove", onMouseMove);
     canvas.addEventListener("mouseleave", onMouseLeave);
     canvas.addEventListener("click", onClick);
 
     return () => {
       cancelAnimationFrame(animationFrameId);
-      window.removeEventListener("resize", buildBlocks);
+      window.removeEventListener("resize", onResize);
       canvas.removeEventListener("mousemove", onMouseMove);
       canvas.removeEventListener("mouseleave", onMouseLeave);
       canvas.removeEventListener("click", onClick);
     };
-  }, [reduceMotion]);
+  }, [reduceMotion, isLight]);
 
   return (
-    <div className="gate-card overflow-hidden bg-[#041016] border-[#29dfeb] relative">
-      <div className="px-4 py-1.5 border-b border-[#29dfeb]/40 bg-[#061c24] flex items-center justify-between font-mono text-[10px] uppercase text-[#7df9ff]">
+    <div className="gate-card overflow-hidden">
+      <div
+        className="px-4 py-1.5 border-b-2 border-[var(--border-ink)] flex items-center justify-between font-mono text-[10px] font-bold uppercase"
+        style={{
+          backgroundColor: "var(--badge-bg)",
+          color: "var(--badge-text)",
+        }}
+      >
         <span>■ INTERACTIVE VOXEL CREST — HOVER TO LIFT, CLICK FOR SCULK RIPPLE</span>
-        <span className="hidden sm:inline text-[#29dfeb]">PATROL: WARDEN &amp; HEX</span>
+        <span className="hidden sm:inline">PATROL: WARDEN &amp; HEX</span>
       </div>
       <canvas
         ref={canvasRef}
-        className="w-full h-[160px] block cursor-pointer"
+        className="w-full h-[164px] block cursor-pointer"
         aria-label={`Interactive pixel-block title for ${BRAND.name}`}
       />
     </div>
