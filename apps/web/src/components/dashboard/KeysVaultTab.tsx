@@ -41,7 +41,9 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<
   openai_compatible: { model: "gpt-4o-mini", placeholder: "Paste OpenAI-compatible key (sk-...)" },
 };
 export function KeysVaultTab() {
-  const [gatewayUrl, setGatewayUrl] = useState("http://127.0.0.1:8787");
+  const [gatewayUrl, setGatewayUrl] = useState(
+  process.env.NEXT_PUBLIC_GATEWAY_URL || "http://127.0.0.1:8787"
+);
   const [gatewayStatus, setGatewayStatus] = useState<"checking" | "online" | "offline">("checking");
 
   // Active Tenant wrd_ key
